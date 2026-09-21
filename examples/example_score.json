@@ -1,0 +1,17 @@
+{
+  "spk_id": 2,
+  "style_id": 0,
+  "phonemes": [
+    {"ph": "pau", "dur": 0.50},
+    {"ph": "k",   "dur": 0.08},
+    {"ph": "a",   "dur": 0.42, "midi": 61},
+    {"ph": "cl",  "dur": 0.10},
+    {"ph": "t",   "dur": 0.08},
+    {"ph": "a",   "dur": 0.50, "midi": 65},
+    {"ph": "pau", "dur": 0.40},
+    {"ph": "y",   "dur": 0.07},
+    {"ph": "u",   "dur": 0.60, "midi": 63},
+    {"ph": "N",   "dur": 0.30, "midi": 63},
+    {"ph": "pau", "dur": 0.40}
+  ]
+}

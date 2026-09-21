@@ -1,0 +1,86 @@
+# ── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# ── Datasets (users download the DBs and run preprocess themselves) ──────────
+download/
+data/
+data_*/
+*.npz
+*.wav
+*.flac
+*.lab
+*.TextGrid
+# デモページが鳴らす音源だけは同梱する（docs/index.html が参照する。
+# 生成は tools/render_demos.py → tools/make_demo_audio.py）
+!docs/audio/*.flac
+
+# ── Local-only material that is never part of the repository ─────────────────
+_dev_only/
+
+# ── Model weights: only the three bundled files are tracked ──────────────────
+# (also covers preprocess/algorithms/rmvpe.pt, auto-downloaded on first run)
+*.pt
+*.ckpt
+*.pth
+*.onnx
+!checkpoints/f0_3singer.pt
+!checkpoints/cons_dur_3singer.pt
+!checkpoints/nhv_v3_2_1.onnx
+
+# Where the LeapSinger model release is extracted (only the note is tracked)
+checkpoints/leapsinger/**
+!checkpoints/leapsinger/place_leapsinger_models_here.txt
+
+# ── Training / experiment / listening outputs ────────────────────────────────
+log/
+logs/
+runs/
+out/
+output/
+wandb/
+events.out.tfevents.*
+temp/
+
+# ── Notebook outputs (notebooks are committed with their outputs cleared) ────
+notebooks/out/
+.ipynb_checkpoints/
+
+# ── Figure generators (only the rendered PNG/SVG are tracked) ────────────────
+# 図の生成スクリプトは同梱しない。ローカルの data/ やウェイトが要るものがあり、
+# 同梱図の一部は生成物をそのまま使わずレイアウトを組み直しているため。
+guide/fig/_style.py
+guide/fig/make_*.py
+tools/plot_f0_layers.py
+# 生成スクリプトが描く素の版（同梱するのは組み直した pitch_correction / svs_pipeline）
+guide/fig/pitch_correction_detuned.png
+guide/fig/pitch_correction_detuned.svg
+guide/fig/svs_pipeline_plain.png
+guide/fig/svs_pipeline_plain.svg
+guide/fig/prettypitch_overview_plain.png
+guide/fig/prettypitch_overview_plain.svg
+
+# 資料が読まない方の版（生成スクリプトは PNG と SVG を両方書き出す）
+guide/fig/duration_model.svg
+guide/fig/representative_pitch.svg
+guide/fig/vibrato_separation.svg
+# pitch_correction はデザイナーの SVG が原本。同梱するのはそれを書き出した PNG
+guide/fig/pitch_correction.svg
+
+# ── Local scratch, virtualenvs, editor and tool caches ───────────────────────
+scratch/
+tmp/
+_migration/
+.DS_Store
+.venv/
+venv/
+.env
+.idea/
+.vscode/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

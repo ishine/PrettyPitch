@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=77"]      # license / license-files（PEP 639）に必要
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "prettypitch"
+version = "0.1.0"
+description = "Score-free F0 (pitch curve) model for singing voice synthesis"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE", "LICENSES/*", "THIRD_PARTY_NOTICES.md"]
+readme = "README.md"
+authors = [{ name = "wavtechyukky" }]
+urls = { Repository = "https://github.com/wavtechyukky/PrettyPitch" }
+# 推論（infer / svs.render）に要るもの。onnxruntime は同梱ボコーダ nhv_v3_2.onnx 用。
+dependencies = [
+    "torch>=2.0",
+    "numpy",
+    "scipy",
+    "librosa",
+    "soundfile",
+    "pyyaml",
+    "pyloudnorm",
+    "tqdm",
+    "matplotlib",
+    "onnxruntime",
+]
+
+[project.optional-dependencies]
+train = ["tensorboard"]                              # 学習（TensorBoard）
+data = ["gdown"]                                     # preprocess/download_scripts/（DB のダウンロード）
+tuner = ["fastapi", "uvicorn"]                       # vibrato_separation_tuner web app
+notebooks = ["jupyter", "ipykernel"]                 # notebooks/
+export = ["onnx", "onnxsim"]                         # export/（ONNX 書き出し）
+test = ["pytest"]                                    # tests/
+
+# Only the model package is installed; `preprocess/`, `export/`, `svs/`, `duration_model/`,
+# `dataset.py`, `train.py`, `infer.py` are repo-root modules — clone the repo,
+# `pip install -e .`, and run every `python -m ...` command from the clone's root.
+[tool.setuptools.packages.find]
+include = ["prettypitch*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

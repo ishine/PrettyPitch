@@ -1,0 +1,92 @@
+# Recipe: 架空の日本語話者「みなも」。**値を書いた例**。
+#
+# 同梱の 5 つのレシピ（oniku / natsume / ritsu / ritsu_normal / ritsu_soft）は
+# decomp / pitch / duration がすべて空で、コメントに書式があるだけです。実際に書くと
+# どうなるかを見せるために、この 1 本だけ全部埋めてあります。
+#
+# **このレシピはそのままでは動きません**（download/minamo/ は存在しません）。写して
+# ご自分の DB に合わせて書き換えてください。
+#
+#   cp configs/recipes/example_filled.yaml configs/recipes/<あなたの DB 名>.yaml
+#
+# ファイル名の <db> は preprocess.run が書き出す data/<db>/ と同じにしてください。
+# 学習時はこの名前でレシピが引かれます。
+#
+# 話者 / スタイル ID はここでは決めません。学習 config の data.spk_map / style_map が
+# 唯一の情報源です。レシピは「その DB をどう読むか」だけを書きます。
+
+name: minamo
+lang: ja                   # 言語パック dict/ja.yaml（音素表・核音素・無音写像）
+
+# ── 読み取り ────────────────────────────────────────────────────────────────
+layout: per_song           # per_song = 曲ごとのフォルダ / type_split = wav/ と lab/ に分かれる
+db_root: download/minamo
+wav: "{song}/{song}.wav"
+lab: "{song}/{song}.lab"
+lab_unit: "sec"            # lab の時間単位。"sec"（小数秒）か "100ns"（HTS）
+
+phon_norm:                 # ラベルの記号を音素表の記号へ寄せる
+  GlottalStop: cl          #   声門閉鎖を促音の閉鎖記号へ畳む
+  vf: pau                  #   vocal fry のラベルを無音扱いにする
+
+exclude:                   # 使わない曲。理由を書いておくと後で判断できる
+  - warmup_scale           #   発声練習。歌でないので教師にならない
+  - take2_kokoro           #   同じ曲の別テイク。重複を避ける
+
+# ── F0 抽出まわり ───────────────────────────────────────────────────────────
+f0_octave_fix: true        # 中央値窓によるオクターブ誤りの補正
+silence_pau: true          # pau と誤ラベルの長い cl を、F0 抽出の **前に** 無音化する。
+                           # ラベル上は無音でも息継ぎが入っており、抽出器がそれを有声と
+                           # 判定して歌唱より高い F0 を返すため（男声で特に深刻）。
+silence_fade_sec: 0.05     # 両端フェード [s]。中央の core だけ消すので、尾曳き（直前の音の
+                           # 減衰）と歌い出し（次の音の立ち上がり）は残る。
+
+# ── ここから下は「ローダーが毎回読む」設定 ──────────────────────────────────
+# train.py が config の per_db へ畳み込みます。**値を変えても再 preprocess は不要**です。
+# config（configs/ja_example.yaml）の同名セクションが全 DB 共通の既定で、ここが上書きします。
+
+reject_f0_below: 110.0     # この F0[Hz] 未満の有声フレームを 1 つでも含む句を捨てる。
+                           # 抽出器がロングトーンの消え際で残響に食いつき、実音域より
+                           # はるかに低い F0 を返すことがある。話者の音域で決める:
+                           # みなもは女声で最低音が A3(220Hz) なので、その半分より少し上。
+                           # 男声なら 60〜70 程度。高くしすぎると低音の句が丸ごと消える。
+
+decomp:                    # ビブラート分離の上書き（prettypitch/decomp.py）
+  band: [5.0, 7.5]         #   ビブラートとみなす周波数帯 [Hz]。みなもは速めなので下限を上げた。
+                           #   下げすぎると、しゃくりの立ち上がりがビブラートに混ざる。
+  fir_time_sec: 0.3        #   バンドパスの FIR 長 [s]。長いほど帯域が鋭いが端が効かなくなる。
+  cons_margin_pre_sec: 0.05    # 子音の手前 [s] をビブラート抽出から除く
+  cons_margin_post_sec: 0.15   # 子音の後ろ [s] を除く。子音明けの立ち上がりが偽ビブラートに
+                               # なりやすいので、既定 0.10 より広く取った。
+  boundary_margin_post_sec: 0.15   # 音素境界の後ろも同様に広げる
+  min_open_sec: 0.10       #   これより短い「開いた区間」ではビブラートを取らない [s]
+  # plain_std / vib_std / baseline_sigma_sec は **DB 別にできません**。ckpt が単一値で
+  # 持ち、推論側が全話者に同じ値を使うため、その DB だけ復元がずれます（ValueError に
+  # なります）。変えるなら config の decomp: に書いて全 DB 共通にしてください。
+
+pitch:                     # F0 代表値の推定（prettypitch/pitch.py）
+  sigma_st: 0.5            #   目標音高への近さの重み。小さいほど「楽譜に近いフレーム」を
+                           #   重く見る。1.0 が既定で、0.5 は絞り込みを強めた設定。
+  edge_window: asym        #   核の端を落とす窓。asym = 非対称（入口と出口で幅が違う）
+  edge_lead_frac: 0.8      #   入口側のテーパ比。大きいほど、しゃくりの裾を代表値から外す
+  edge_trail_frac: 0.3     #   出口側。小さいほど終わり際まで使う
+  stability: slope         #   安定度の測り方。slope = F0 の傾きが小さいほど重い
+  devib_representative: false  # 代表値を取る前にビブラートを除くか。false = 除かない
+  crest_max_ms: 300        #   これより短い核は「山」とみなし、頂点付近を代表値にする [ms]
+
+duration:                  # 子音長プロファイルの DB 別設定。
+                           # build_profile が per_speaker へ書き出します。
+  vowel_floor_sec: 0.070   #   母音の最低保証 [s]。みなもは早口の曲が多いので既定 0.075 より
+                           #   少し下げた。入らなければ下の重みで圧縮されます。
+  phoneme_weight_default: 1.0   # 区間が足りないときの取り分の重み。比がそのまま長さの比に
+                                # なります（全部 1.0 なら等分）。
+  phoneme_weight:          #   音素別の上書き。子音にも母音にも書けます。
+    s: 1.6                 #     摩擦音は短いと「す」が消えるので多めに取らせる
+    sh: 1.6
+    ky: 1.4                #     拗音のわたりも潰れやすい
+    u: 0.7                 #     無声化しやすい母音は削ってよい
+  cons_floor_stat: mean-sd #   子音 floor の統計量。mean-sd = 平均 − σ（既定）/ pctl = 百分位
+  sd_cap: 0.6              #   mean-sd で σ を平均の何倍で頭打ちにするか。
+                           #   0.6 なら floor は平均の 40% を下回りません。
+  min_n: 30                #   統計で floor を決める最小サンプル数。足りない子音は共通値へ。
+  min_lead_n: 10           #   フレーズ先頭 floor（p75）を書く最小サンプル数。

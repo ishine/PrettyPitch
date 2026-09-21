@@ -1,0 +1,63 @@
+PrettyPitch — 同梱モデルのクレジットと出典
+Credits and attribution for the models bundled with PrettyPitch
+====================================================================
+
+このフォルダの f0_3singer.pt（F0 モデル）と cons_dur_3singer.pt（子音長モデル）は、
+以下の歌声データベースを用いて学習しています。ご利用の際は、各データベースの
+利用規約に従ってください。とくに夏目悠李については、出力音声に関する利用規約の
+全文をこのフォルダに同梱しています（下記参照）。
+
+f0_3singer.pt (the F0 model) and cons_dur_3singer.pt (the consonant-duration
+model) in this folder were trained on the singing voice databases below. Please
+follow each database's terms of use. For Natsume Yuuri, the full terms for the
+output audio are bundled in this folder (see below).
+
+
+■ 話者クレジット / Voice credits
+--------------------------------------------------------------------
+
+・御丹宮くるみ / Oniku Kurumi
+    御丹宮くるみ歌声データベース
+    https://onikuru.info/db-download/
+
+・夏目悠李 / Natsume Yuuri
+    歌声DB制作: アマノケイ ／ 音声提供者: 霧野蒼太
+    https://ksdcm1ng.wixsite.com/njksofficial/enunu-nnsvs
+    ※ 利用規約（出力音声に関する規約を含む全文）をこのフォルダに同梱しています:
+         「夏目悠李_利用規約.txt」
+       Please read the bundled terms of use.
+
+・波音リツ / Namine Ritsu
+    https://www.canon-voice.com/voicebanks/
+
+
+■ ボコーダー / 関連プロジェクト / Vocoder & related projects
+--------------------------------------------------------------------
+
+・nhv_v3_2_1.onnx — NHVSing vocoder (MIT, Copyright (c) 2025 wavtechyukky)
+    https://github.com/wavtechyukky/NHVSing/
+    同じ 3 つのデータベースで学習しています / trained on the same three databases.
+・LeapSinger acoustic model（このリポジトリには含まれません。LeapSinger の Release から
+  checkpoints/leapsinger/ へ置いてください / not included here; see the LeapSinger release）
+    https://github.com/wavtechyukky/LeapSinger/
+
+
+■ 利用上の注意 / Notes on use
+--------------------------------------------------------------------
+
+・これらのモデルは個人・非営利での利用を前提としています。商用利用や、法人による配布・
+  利用は、各データベースの規約に従って事前の許諾・問い合わせが必要な場合があります。
+・利用条件の詳細は、各データベースの公式規約（上記URL）と、同梱の
+  「夏目悠李_利用規約.txt」を必ずご確認ください。本ファイルの記載はあくまで概要であり、
+  正確な条件は各公式規約が優先します。
+・モデルを再配布するときは、このファイルと「夏目悠李_利用規約.txt」を一緒に配布してください。
+
+・These models are intended for personal, non-commercial use. Commercial use, or
+  distribution/use by an organization, may require prior permission from the
+  respective databases. This file is only a summary; the official terms of each
+  database, and the bundled Natsume Yuuri terms, take precedence.
+・When redistributing the models, keep this file and 夏目悠李_利用規約.txt with them.
+
+
+--------------------------------------------------------------------
+PrettyPitch : https://github.com/wavtechyukky/PrettyPitch

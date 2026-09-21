@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PrettyPitch Demo</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+           background: #f8f9fa; color: #212529; line-height: 1.6; }
+    header { background: #1a1a2e; color: #fff; padding: 48px 24px 40px; text-align: center; }
+    header h1 { font-size: 2rem; font-weight: 700; margin-bottom: 8px; }
+    header p  { font-size: 1rem; color: #adb5bd; max-width: 840px; margin: 0 auto 8px; }
+    header a  { color: #74c0fc; text-decoration: none; }
+    header a:hover { text-decoration: underline; }
+    main { max-width: 1120px; margin: 0 auto; padding: 40px 20px 80px; }
+    .intro { background: #fff; border-left: 4px solid #4dabf7; border-radius: 0 8px 8px 0;
+             padding: 18px 22px; margin-bottom: 48px; font-size: 0.95rem; color: #343a40;
+             box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+    .intro code { background: #f1f3f5; padding: 1px 5px; border-radius: 4px; font-size: 0.88em; }
+    section { margin-bottom: 56px; }
+    h2 { font-size: 1.4rem; font-weight: 700; margin-bottom: 6px; padding-bottom: 8px;
+         border-bottom: 2px solid #dee2e6; }
+    .section-note { font-size: 0.88rem; color: #6c757d; margin-bottom: 18px; }
+    table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px;
+            overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.08); margin-bottom: 8px; }
+    th { background: #343a40; color: #fff; font-size: 0.82rem; font-weight: 600;
+         text-transform: uppercase; letter-spacing: 0.05em; padding: 12px 16px; text-align: center; }
+    th:first-child { text-align: left; }
+    td { padding: 12px 14px; border-bottom: 1px solid #f1f3f5; vertical-align: middle; text-align: center; }
+    td:first-child { text-align: left; color: #495057; }
+    tr:last-child td { border-bottom: none; }
+    tr:nth-child(even) td { background: #fafbfc; }
+    audio { width: 100%; min-width: 150px; max-width: 320px; height: 34px; }
+    .song { font-weight: 600; color: #212529; }
+    .meta { display: block; font-size: 0.78rem; color: #868e96; font-weight: 400; }
+    .num  { font-variant-numeric: tabular-nums; }
+    figure { background: #fff; border-radius: 8px; padding: 16px; margin-bottom: 8px;
+             box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+    figure img { display: block; width: 100%; height: auto; }
+    figcaption { font-size: 0.82rem; color: #6c757d; margin-top: 10px; }
+    footer { text-align: center; font-size: 0.82rem; color: #adb5bd; padding: 32px 20px;
+             border-top: 1px solid #dee2e6; }
+    footer a { color: #868e96; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>PrettyPitch</h1>
+  <p>A singing F0 model trained <b>without scores</b>. There are no note onsets and no note
+     pitches in the training data — only singing and its phoneme labels. The pitch target for
+     every nucleus phoneme is estimated from the sung F0 itself, so a new voice needs nothing
+     but audio and a phoneme alignment.</p>
+  <p>
+    <a href="https://github.com/wavtechyukky/PrettyPitch" target="_blank">GitHub Repository</a>
+  </p>
+</header>
+
+<main>
+
+  <div class="intro">
+    Everything below is synthesized from a MusicXML score in this repository, with the bundled
+    weights: the <b>F0 model</b> and the <b>consonant-length model</b> from PrettyPitch, the
+    acoustic model from <a href="https://github.com/wavtechyukky/LeapSinger" target="_blank">LeapSinger</a>,
+    and the <a href="https://github.com/wavtechyukky/NHVSing" target="_blank">NHVSing</a> vocoder.
+    One command per clip: <code>python -m svs.render examples/&lt;score&gt;.musicxml --spk_id 2</code>.
+    The F0 and the mel are reproducible from the seed; only the vocoder's noise component
+    differs between runs.
+  </div>
+
+  <section>
+    <h2>Three singers, one score</h2>
+    <p class="section-note">
+      The same MusicXML, rendered for each of the three bundled speakers. The speaker id goes
+      to all three models — consonant lengths, F0 and mel — so the timing changes with the
+      voice, not just the timbre. Natsume is transposed down 5 semitones to sit in his range;
+      nothing else differs between the columns.
+    </p>
+    <table>
+      <tr>
+        <th>Score</th>
+        <th>ONIKU Kurumi</th>
+        <th>Natsume Yuuri <span style="font-weight:400;text-transform:none">(−5)</span></th>
+        <th>Namine Ritsu</th>
+      </tr>
+      <tr>
+        <td><span class="song">Kirakira Boshi</span>
+            <span class="meta">きらきら星 · 120 BPM · 26 s</span></td>
+        <td><audio controls preload="none" src="audio/kirakiraboshi_oniku.flac"></audio></td>
+        <td><audio controls preload="none" src="audio/kirakiraboshi_natsume.flac"></audio></td>
+        <td><audio controls preload="none" src="audio/kirakiraboshi_ritsu.flac"></audio></td>
+      </tr>
+      <tr>
+        <td><span class="song">Furusato</span>
+            <span class="meta">ふるさと · 120 BPM · 26 s</span></td>
+        <td><audio controls preload="none" src="audio/furusato_oniku.flac"></audio></td>
+        <td><audio controls preload="none" src="audio/furusato_natsume.flac"></audio></td>
+        <td><audio controls preload="none" src="audio/furusato_ritsu.flac"></audio></td>
+      </tr>
+      <tr>
+        <td><span class="song">Haru no Ogawa</span>
+            <span class="meta">春の小川 · 100 BPM · 38 s</span></td>
+        <td><audio controls preload="none" src="audio/haru_no_ogawa_oniku.flac"></audio></td>
+        <td><audio controls preload="none" src="audio/haru_no_ogawa_natsume.flac"></audio></td>
+        <td><audio controls preload="none" src="audio/haru_no_ogawa_ritsu.flac"></audio></td>
+      </tr>
+    </table>
+    <h3 style="font-size:1.05rem;font-weight:700;margin:28px 0 4px">What the models produced</h3>
+    <p class="section-note">
+      Every clip above, drawn from the same render. The pale boxes are the notes once the
+      consonants have been pulled forward; the line is the generated F0; the strip underneath
+      is the phoneme timeline, and the panel behind the F0 is shaded the same way
+      (green = vowel, blue = consonant, grey = rest).
+      <br>
+      The F0 is <b>dotted where the frame is unvoiced</b>. It is not missing there: the model
+      produces a continuous F0 and a separate voiced/unvoiced channel, and the acoustic model
+      and the vocoder both receive the continuous curve. The vocoder uses the voicing decision
+      to gate its harmonic excitation, which is why the dotted stretches are silent in pitch
+      but still carry the contour into the next note.
+    </p>
+    <figure style="margin-top:14px">
+      <img src="fig/demo_kirakiraboshi_oniku.png" alt="notes, F0 and durations for Kirakira Boshi sung by ONIKU Kurumi">
+      <figcaption>Kirakira Boshi (きらきら星) — ONIKU Kurumi</figcaption>
+    </figure>
+    <figure style="margin-top:14px">
+      <img src="fig/demo_kirakiraboshi_natsume.png" alt="notes, F0 and durations for Kirakira Boshi sung by Natsume Yuuri">
+      <figcaption>Kirakira Boshi (きらきら星) — Natsume Yuuri</figcaption>
+    </figure>
+    <figure style="margin-top:14px">
+      <img src="fig/demo_kirakiraboshi_namine.png" alt="notes, F0 and durations for Kirakira Boshi sung by Namine Ritsu">
+      <figcaption>Kirakira Boshi (きらきら星) — Namine Ritsu</figcaption>
+    </figure>
+    <figure style="margin-top:14px">
+      <img src="fig/demo_furusato_oniku.png" alt="notes, F0 and durations for Furusato sung by ONIKU Kurumi">
+      <figcaption>Furusato (ふるさと) — ONIKU Kurumi</figcaption>
+    </figure>
+    <figure style="margin-top:14px">
+      <img src="fig/demo_furusato_natsume.png" alt="notes, F0 and durations for Furusato sung by Natsume Yuuri">
+      <figcaption>Furusato (ふるさと) — Natsume Yuuri</figcaption>
+    </figure>
+    <figure style="margin-top:14px">
+      <img src="fig/demo_furusato_namine.png" alt="notes, F0 and durations for Furusato sung by Namine Ritsu">
+      <figcaption>Furusato (ふるさと) — Namine Ritsu</figcaption>
+    </figure>
+    <figure style="margin-top:14px">
+      <img src="fig/demo_haru_no_ogawa_oniku.png" alt="notes, F0 and durations for Haru no Ogawa sung by ONIKU Kurumi">
+      <figcaption>Haru no Ogawa (春の小川) — ONIKU Kurumi</figcaption>
+    </figure>
+    <figure style="margin-top:14px">
+      <img src="fig/demo_haru_no_ogawa_natsume.png" alt="notes, F0 and durations for Haru no Ogawa sung by Natsume Yuuri">
+      <figcaption>Haru no Ogawa (春の小川) — Natsume Yuuri</figcaption>
+    </figure>
+    <figure style="margin-top:14px">
+      <img src="fig/demo_haru_no_ogawa_namine.png" alt="notes, F0 and durations for Haru no Ogawa sung by Namine Ritsu">
+      <figcaption>Haru no Ogawa (春の小川) — Namine Ritsu</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>How fast is too fast</h2>
+    <p class="section-note">
+      One score — the scat chorus of <i>Ievan polkka</i> — at five tempos, sung by Namine Ritsu.
+      Only the tempo changes; the notes and the lyrics are identical. At 400 BPM an eighth note
+      lasts 75 ms, which is the vowel floor, so the whole line is past the point where the
+      written durations fit.
+    </p>
+    <table>
+      <tr>
+        <th>Tempo</th>
+        <th class="num">Eighth note</th>
+        <th class="num">Shortest consonant</th>
+        <th>Audio</th>
+      </tr>
+      <tr><td><span class="song">200 BPM</span></td><td class="num">150 ms</td><td class="num">23.0 ms</td>
+          <td><audio controls preload="none" src="audio/ievan_polkka_200_ritsu.flac"></audio></td></tr>
+      <tr><td><span class="song">250 BPM</span></td><td class="num">120 ms</td><td class="num">22.8 ms</td>
+          <td><audio controls preload="none" src="audio/ievan_polkka_250_ritsu.flac"></audio></td></tr>
+      <tr><td><span class="song">300 BPM</span></td><td class="num">100 ms</td><td class="num">22.7 ms</td>
+          <td><audio controls preload="none" src="audio/ievan_polkka_300_ritsu.flac"></audio></td></tr>
+      <tr><td><span class="song">350 BPM</span></td><td class="num">86 ms</td><td class="num">30.0 ms</td>
+          <td><audio controls preload="none" src="audio/ievan_polkka_350_ritsu.flac"></audio></td></tr>
+      <tr><td><span class="song">400 BPM</span></td><td class="num">75 ms</td><td class="num">30.0 ms</td>
+          <td><audio controls preload="none" src="audio/ievan_polkka_400_ritsu.flac"></audio></td></tr>
+    </table>
+    <p class="section-note" style="margin-top:14px">
+      No consonant falls below 20 ms at any tempo, and the shortest one is <i>longer</i> at 350
+      and 400 BPM than at 300. Once the floors stop fitting, the span is shared between the
+      phonemes that compete for it by weight, and with the default weights that means the vowel
+      and each consonant come out the same length — so a plosive is not the one that gets
+      crushed.
+    </p>
+    <figure style="margin-top:20px">
+      <img src="fig/demo_durations.png" alt="the generated phoneme durations at two tempos">
+      <figcaption>The durations behind the first and last clips above: the same ten syllables
+        at 200 and at 400 BPM, drawn on the same millisecond scale. At 200 BPM the consonants
+        sit at their own lengths and the vowels take what is left. At 400 BPM nothing fits any
+        more, so consonants and vowels come out at the same length — which is what keeps the
+        line articulate instead of turning into a run of vowels.</figcaption>
+    </figure>
+  </section>
+
+
+  <section>
+    <h2>Two knobs at synthesis time</h2>
+    <p class="section-note">
+      The model does not output one pitch curve. It outputs an expression layer and a vibrato
+      layer separately, so either can be scaled when you synthesize, without retraining and
+      without touching the other. Below: the first phrase of <i>Furusato</i> sung by Namine
+      Ritsu, with both knobs swept over ×0.0, ×0.5, ×1.0, ×1.5 and ×2.0 — 25 clips. At ×0.0
+      the layer is gone entirely: no expression means the score's pitch with nothing added,
+      no vibrato means a steady tone. Same seed throughout, so the only difference is the
+      scaling.
+    </p>
+    <table>
+      <tr>
+        <th></th>
+        <th>vibrato ×0.0</th>
+        <th>vibrato ×0.5</th>
+        <th>vibrato ×1.0</th>
+        <th>vibrato ×1.5</th>
+        <th>vibrato ×2.0</th>
+      </tr>
+      <tr>
+        <td><span class="song">expression ×0.0</span></td>
+        <td><audio controls preload="none" src="audio/demo_scale_p00_v00.flac"></audio></td>
+        <td><audio controls preload="none" src="audio/demo_scale_p00_v05.flac"></audio></td>
+        <td><audio controls preload="none" src="audio/demo_scale_p00_v10.flac"></audio></td>
+        <td><audio controls preload="none" src="audio/demo_scale_p00_v15.flac"></audio></td>
+        <td><audio controls preload="none" src="audio/demo_scale_p00_v20.flac"></audio></td>
+      </tr>
+      <tr>
+        <td><span class="song">expression ×0.5</span></td>
+        <td><audio controls preload="none" src="audio/demo_scale_p05_v00.flac"></audio></td>
+        <td><audio controls preload="none" src="audio/demo_scale_p05_v05.flac"></audio></td>
+        <td><audio controls preload="none" src="audio/demo_scale_p05_v10.flac"></audio></td>
+        <td><audio controls preload="none" src="audio/demo_scale_p05_v15.flac"></audio></td>
+        <td><audio controls preload="none" src="audio/demo_scale_p05_v20.flac"></audio></td>
+      </tr>
+      <tr>
+        <td><span class="song">expression ×1.0</span></td>
+        <td><audio controls preload="none" src="audio/demo_scale_p10_v00.flac"></audio></td>
+        <td><audio controls preload="none" src="audio/demo_scale_p10_v05.flac"></audio></td>
+        <td><audio controls preload="none" src="audio/demo_scale_p10_v10.flac"></audio></td>
+        <td><audio controls preload="none" src="audio/demo_scale_p10_v15.flac"></audio></td>
+        <td><audio controls preload="none" src="audio/demo_scale_p10_v20.flac"></audio></td>
+      </tr>
+      <tr>
+        <td><span class="song">expression ×1.5</span></td>
+        <td><audio controls preload="none" src="audio/demo_scale_p15_v00.flac"></audio></td>
+        <td><audio controls preload="none" src="audio/demo_scale_p15_v05.flac"></audio></td>
+        <td><audio controls preload="none" src="audio/demo_scale_p15_v10.flac"></audio></td>
+        <td><audio controls preload="none" src="audio/demo_scale_p15_v15.flac"></audio></td>
+        <td><audio controls preload="none" src="audio/demo_scale_p15_v20.flac"></audio></td>
+      </tr>
+      <tr>
+        <td><span class="song">expression ×2.0</span></td>
+        <td><audio controls preload="none" src="audio/demo_scale_p20_v00.flac"></audio></td>
+        <td><audio controls preload="none" src="audio/demo_scale_p20_v05.flac"></audio></td>
+        <td><audio controls preload="none" src="audio/demo_scale_p20_v10.flac"></audio></td>
+        <td><audio controls preload="none" src="audio/demo_scale_p20_v15.flac"></audio></td>
+        <td><audio controls preload="none" src="audio/demo_scale_p20_v20.flac"></audio></td>
+      </tr>
+    </table>
+    <figure style="margin-top:20px">
+      <img src="fig/demo_scales.png" alt="expression and vibrato scaled independently">
+      <figcaption>Why the knobs are separate. Above: the F0 with the expression scaled — the
+        scoops into notes, the transitions and the note tails all grow together, while the
+        pitch of the notes themselves stays put. Below: the vibrato channel on its own, in
+        cents. Overlaying all 25 combinations on one axis hides this: vibrato here is about
+        ±40 cents at ×1.0, small next to the semitone-scale gestures above it.</figcaption>
+    </figure>
+    <p class="section-note" style="margin-top:14px">
+      Both are arguments to one call:
+      <code>render_phrase(ctx, phrase, plain_scale=1.5, vib_scale=0.5)</code>. They also accept
+      a per-frame array instead of a number, so the strength can change over the course of a
+      phrase — <code>notebooks/03_f0_control.ipynb</code> ramps the vibrato from nothing to
+      double across a song.
+    </p>
+  </section>
+
+  <section>
+    <h2>What the F0 model produces</h2>
+    <p class="section-note">
+      F0 is a sum of three layers in the log domain, plus a voiced/unvoiced channel. The
+      baseline is built deterministically from the note pitches; the model generates the two
+      layers on top of it, so the pitch follows the score while the expression is learned.
+    </p>
+    <figure>
+      <img src="fig/f0_layers_furusato.png" alt="baseline, plain and vibrato layers of the F0">
+      <figcaption>The first phrase of <i>Furusato</i>, sung by Namine Ritsu. Each panel adds one
+        layer: the baseline staircase, then the expression, then the vibrato.</figcaption>
+    </figure>
+    <p class="section-note">
+      The repository's <code>guide/</code> directory explains each stage, and the notebooks show
+      how to change the expression and the vibrato at synthesis time, either as one number for
+      the whole phrase or as a value that moves through it.
+    </p>
+  </section>
+
+</main>
+
+<footer>
+  Audio synthesized with the weights bundled in the repository. Voice banks by their respective
+  authors — see <a href="https://github.com/wavtechyukky/PrettyPitch/blob/main/checkpoints/CREDITS.txt">CREDITS.txt</a>.
+  Scores are public-domain melodies. ·
+  <a href="https://github.com/wavtechyukky/PrettyPitch">GitHub</a>
+</footer>
+
+</body>
+</html>

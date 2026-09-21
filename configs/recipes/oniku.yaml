@@ -1,0 +1,51 @@
+# Recipe: ONIKU_KURUMI singing DB.
+# Per-song folders each holding {song}.{lab,musicxml,wav}. lab is HTS 100ns.
+# 話者 / スタイル ID はここでは決めない — 学習 config の data.spk_map / style_map が
+# 唯一の情報源。レシピは「その DB をどう読むか」だけを書く。
+name: oniku
+lang: ja                      # 言語パック dict/ja.yaml（音素表・核音素・無音写像）
+f0_octave_fix: true
+silence_pau: true          # pau / 誤ラベルの長い cl を F0 抽出の **前に** 無音化する。
+                           # ラベル上は無音でも息継ぎが入っており、抽出器がそれを有声と
+                           # 判定して歌唱より高い F0 を返すため（男声で特に深刻）。
+silence_fade_sec: 0.05     # 両端フェード [s]。中央の core だけ消すので、尾曳き（直前の音の
+                           # 減衰）と歌い出し（次の音の立ち上がり）は残る。
+lab_unit: "100ns"
+
+layout: per_song
+db_root: download/oniku
+wav: "{song}/{song}.wav"
+lab: "{song}/{song}.lab"
+
+phon_norm: {}
+exclude: []
+
+# ── 学習時の DB 別ハイパラ ───────────────────────────────────────────────────
+# ここは **ローダー** が読む（train.py が config の per_db へ畳み込む）。値を変えても
+# 再 preprocess は要らない。config の同名セクションが全 DB 共通の既定で、ここが上書き。
+reject_f0_below: 100.0     # この F0[Hz] 未満の有声フレームを 1 つでも含む句を捨てる。
+                           # 抽出器がロングトーンの消え際で残響に食いつき、実音域より
+                           # はるかに低い F0 を返すことがある。閾値は話者の音域で決まる:
+                           # 女声の歌唱域より十分低い値。
+
+decomp: {}                 # ビブラート分離の上書き。例:
+                           #   band: [4.5, 7.5]
+                           #   fir_time_sec: 0.3
+                           #   cons_margin_post_sec: 0.25
+                           # plain_std / vib_std / baseline_sigma_sec は **DB 別にできない**
+                           # （ckpt が単一値で持ち、推論側が全話者に同じ値を使うため）。
+
+pitch: {}                  # F0 代表値の上書き。例:
+                           #   sigma_st: 0.5
+                           #   devib_representative: false
+                           #   edge_lead_frac: 0.8
+
+duration: {}               # 子音長プロファイルの DB 別設定（build_profile が per_speaker へ書き出す）。
+                           # 書かなければ下の既定。例:
+                           #   vowel_floor_sec: 0.075    # 母音の最低保証 [s]（なるべく保証。入らなければ下の比率で圧縮）
+                           #   phoneme_weight_default: 1.0   # 区間が足りないときの取り分の重み（全音素の既定。比がそのまま長さの比）
+                           #   phoneme_weight: {k: 1.5, i: 0.6}  # 音素別の上書き（子音・母音どちらも書ける）
+                           #   cons_floor_stat: mean-sd  # 子音 floor の統計量 mean-sd | pctl
+                           #   sd_cap: 0.6               # mean-sd で σ を平均の何倍で頭打ちにするか
+                           #   cons_pctl: 5.0            # pctl のときの百分位
+                           #   min_n: 30                 # 統計で floor を決める最小 n

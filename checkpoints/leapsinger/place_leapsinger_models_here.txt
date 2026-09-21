@@ -1,0 +1,31 @@
+Put the LeapSinger acoustic models in this folder.
+
+PrettyPitch only generates F0. To sing (svs.render, notebook 01) it also needs
+the LeapSinger acoustic model, which is distributed by the LeapSinger project.
+(The F0 model, the consonant-duration model and the NHVSing vocoder are already
+in checkpoints/.)
+
+  1. Fetch the models, from the repository root:
+
+         python tools/download_leapsinger.py
+
+     It reads the latest release through the GitHub API and unpacks it here, so
+     you should end up with
+
+         checkpoints/leapsinger/LeapSinger_models/3speaker_gan2d.pth
+         checkpoints/leapsinger/LeapSinger_models/CREDITS.txt
+         ...
+
+     --tag <version> picks a specific release, --zip <path> uses a zip you have
+     already downloaded, and running it again does nothing unless you pass
+     --force. To do it by hand instead, download
+     LeapSinger_models_<version>.zip from
+         https://github.com/wavtechyukky/LeapSinger/releases
+     and extract it here. (svs.render looks for 3speaker_gan2d.pth anywhere
+     under this folder, so the exact subfolder name does not matter.)
+
+  2. Clone the LeapSinger repository next to this one (../LeapSinger); its
+     inference code is imported at run time. Another location can be given with
+     --leapsinger_root.
+
+Everything placed here except this file is ignored by git.

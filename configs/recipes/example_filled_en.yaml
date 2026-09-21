@@ -1,0 +1,83 @@
+# Recipe: 架空の英語話者「Wren」。**英語 DB を読むときの例**。
+#
+# example_filled.yaml の英語版です。日本語との違いだけを説明します。
+# **このレシピはそのままでは動きません**（download/wren/ は存在しません）。写して
+# ご自分の DB に合わせて書き換えてください。
+#
+# 英語で同梱しているのは音素表と正規化の設定だけです（dict/en.yaml）。学習済みウェイトは
+# ありません。英語の話者を作るには、この前処理から学習まで自分で回すことになります。
+#
+#   python -m preprocess.run --recipe configs/recipes/wren.yaml
+#   python -m train --config <あなたの config> --data_dirs data/wren ...
+#   python -m duration_model.train --lang en ...
+#
+# **歌わせるにはモーラ表が要ります。** dict/en.yaml の mora は null です。英語は
+# 書記素→音素が最長一致表では表せないためで（"shh" が sh + h に割れます）、
+# 一般の英語には G2P が必要です。語彙を限った表を自分で作り、
+# `python -m svs.render score.ust --lang en --mora_table <your table>` で渡すか、
+# 楽譜の側で音素を直接指定してください。
+
+name: wren
+lang: en                   # 言語パック dict/en.yaml（ARPAbet 45 音素 + pau）
+
+# ── 読み取り ────────────────────────────────────────────────────────────────
+layout: type_split         # NUS-48E 系は wav/ と lab/ が分かれている
+db_root: download/wren
+wav_dir: wav
+wav: "wav/{song}.wav"
+lab: "labels/{song}.lab"
+lab_unit: "sec"
+name_prefix: "wren"        # 句の名前に付ける接頭辞。他 DB と混ぜても出どころが分かる
+
+phon_norm: {}              # 英語では通常いりません。dict/en.yaml が
+                           #   case_fold: lower（OW1 のような大文字表記を受ける）
+                           #   strip_stress_digits: true（AA1 -> aa）
+                           #   sil_map: sil/sp/br -> pau
+                           # をすでにやります。DB 固有の記号があるときだけ書きます。
+
+exclude:                   # NUS-48E なら read（朗読）を外します。歌でないので教師になりません
+  - wren_read_01
+  - wren_read_02
+
+# ── F0 抽出まわり ───────────────────────────────────────────────────────────
+f0_octave_fix: true
+silence_pau: true
+silence_fade_sec: 0.05
+
+# ── ローダーが毎回読む設定（再 preprocess 不要）──────────────────────────────
+
+reject_f0_below: 75.0      # Wren はバリトン。最低音が D2(73Hz) 付近まで下がるので、
+                           # 日本語の女声に使う 100〜110 だと低音の句が丸ごと消えます。
+                           # 話者の音域で決める値です。
+
+decomp:
+  band: [4.5, 7.0]         #   英語のポピュラー歌唱は日本語の歌より遅めのビブラートが多い
+  fir_time_sec: 0.3
+  cons_margin_post_sec: 0.12
+  boundary_margin_post_sec: 0.12
+  min_open_sec: 0.12       #   英語は 1 音節が長く伸びる（メリスマ）ので少し広く取れる
+
+pitch:
+  sigma_st: 1.0
+  edge_window: asym
+  edge_lead_frac: 0.8
+  edge_trail_frac: 0.3
+  stability: slope
+  devib_representative: false
+  crest_max_ms: 300
+
+duration:
+  vowel_floor_sec: 0.080   #   英語の強勢母音は日本語のモーラ母音より長い。
+                           #   潰れると強勢が失われて別の語に聞こえます。
+  phoneme_weight_default: 1.0
+  phoneme_weight:          #   英語で潰れると困るもの
+    s: 1.6                 #     語尾の複数形・三単現。消えると意味が変わる
+    z: 1.6
+    th: 1.5                #     摩擦が短いと t や f に聞こえる
+    dh: 1.5
+    er: 1.2                #     r 音性母音。短いと ah になる
+    ax: 0.6                #     シュワー（弱母音）は削ってよい
+  cons_floor_stat: mean-sd
+  sd_cap: 0.6
+  min_n: 30
+  min_lead_n: 10

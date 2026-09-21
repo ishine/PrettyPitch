@@ -1,0 +1,741 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vibrato separation tuner — PrettyPitch</title>
+<style>
+  :root { color-scheme: light; }
+  body { margin:0; background:#f4f4f6; color:#222;
+         font: 13px/1.5 -apple-system, "Segoe UI", sans-serif; }
+  header { background:#2b2d3a; color:#eee; padding:8px 16px; font-size:15px; }
+  header .sub { color:#9aa; font-size:12px; margin-left:10px; }
+  .panel { background:#fff; border-bottom:1px solid #ddd; padding:10px 16px; }
+  .row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:4px 0; }
+  input[type=text] { padding:4px 6px; border:1px solid #bbb; border-radius:4px; }
+  input[type=number] { width:64px; padding:3px 4px; border:1px solid #bbb; border-radius:4px; }
+  select { padding:3px 4px; }
+  button { padding:5px 12px; border:1px solid #889; border-radius:4px; background:#eef;
+           cursor:pointer; }
+  button.primary { background:#3a5fd9; color:#fff; border-color:#3a5fd9; font-weight:bold; }
+  button:disabled { opacity:.5; cursor:default; }
+  .dbbox { display:inline-flex; align-items:center; gap:4px; background:#f0f2f8;
+           border:1px solid #ccd; border-radius:4px; padding:2px 8px; }
+  .plabel { color:#667; min-width:0; text-align:right; }
+  .pgrid { display:flex; gap:14px; flex-wrap:wrap; align-items:center; }
+  .pgrid .grp { display:flex; align-items:center; gap:4px; }
+  #cards { max-width:1200px; margin:12px auto; padding:0 12px; }
+  .card { background:#fff; border:1px solid #ddd; border-radius:6px; margin-bottom:14px;
+          padding:8px 10px 10px; }
+  .card h3 { margin:0 0 6px; font-size:13px; font-weight:600; color:#334; }
+  .card h3 .stat { color:#c33; font-weight:700; }
+  .card h3 .dim { color:#889; font-weight:400; }
+  .badge { background:#fa0; color:#fff; border-radius:3px; padding:0 5px; font-size:11px; }
+  #status { color:#667; }
+  #pager, #pager2 { display:flex; gap:10px; align-items:center; justify-content:center;
+                    margin:10px 0; }
+  .tabs { display:flex; gap:0; background:#2b2d3a; padding:0 16px; }
+  .tabs button { border:0; border-radius:0; background:transparent; color:#9aa;
+                 padding:7px 16px; font-size:13px; font-weight:600; }
+  .tabs button.on { background:#f4f4f6; color:#222; }
+</style>
+</head>
+<body>
+<header><b>PrettyPitch tuner</b><span class="sub">inspect how the loader-side pitch analysis reacts to its hyperparameters</span></header>
+<div class="tabs">
+  <button id="tab_vib" class="on" onclick="setTab('vib')">vibrato separation</button>
+  <button id="tab_pitch" onclick="setTab('pitch')">pitch representative</button>
+</div>
+
+<div class="panel">
+  <div class="row">
+    <label>Data folder</label>
+    <input type="text" id="root" size="70">
+    <button onclick="scan()">Scan DBs</button>
+    <span id="status"></span>
+  </div>
+  <div class="row" id="dblist"></div>
+</div>
+
+<div id="viewvib">
+
+<div class="panel">
+  <div class="pgrid">
+    <div class="grp" title="Band-pass range. The effective gain ON a band edge is only 0.25-0.5, so keep both edges well away from real vibrato rates (typically 5-6.5 Hz).">
+      <span class="plabel">band [Hz]</span>
+      <input type="number" id="band_lo" value="4.5" step="0.5"> –
+      <input type="number" id="band_hi" value="7.5" step="0.5"></div>
+    <div class="grp" title="FIR window length. Longer = sharper band edges (better rejection outside the band), but filtfilt needs phrases at least 3x this long — shorter phrases silently get all-zero vibrato (a red warning appears on those cards).">
+      <span class="plabel">FIR window [s]</span>
+      <input type="number" id="fir_time_sec" value="0.3" step="0.02"></div>
+    <div class="grp" title="Zero the vibrato gain for this long BEFORE each consonant run (protects against the tail of the preceding vowel being mistaken for vibrato).">
+      <span class="plabel">cons margin pre [s]</span>
+      <input type="number" id="cons_margin_pre_sec" value="0.05" step="0.01"></div>
+    <div class="grp" title="Zero the gain for this long AFTER each consonant run — usually longer: the pitch scoop rising out of a consonant is not vibrato.">
+      <span class="plabel">post [s]</span>
+      <input type="number" id="cons_margin_post_sec" value="0.10" step="0.01"></div>
+    <div class="grp" title="Zero the gain for this long BEFORE every phoneme boundary (tail of the outgoing phoneme).">
+      <span class="plabel">boundary margin pre [s]</span>
+      <input type="number" id="boundary_margin_pre_sec" value="0.05" step="0.01"></div>
+    <div class="grp" title="Zero the gain for this long AFTER every phoneme boundary — the head of the incoming phoneme (vowel onsets carry pitch transitions, not vibrato). Make this larger to exclude more of each vowel onset.">
+      <span class="plabel">post [s]</span>
+      <input type="number" id="boundary_margin_post_sec" value="0.10" step="0.01"></div>
+    <div class="grp" title="Gaussian smoothing of the 0/1 zeroing curve so the gain ramps instead of jumping. Larger sigma = softer ramps but wider effectively-zero skirts.">
+      <span class="plabel">gain σ [s]</span>
+      <input type="number" id="gain_sigma_sec" value="0.05" step="0.01"></div>
+    <div class="grp" title="Clamp every margin inside the ADJACENT phoneme only: a long post margin stops at the end of the very next phoneme if that phoneme is shorter, so zeroing never carries over into the phoneme after next.">
+      <label><input type="checkbox" id="limit_margin_to_adjacent" checked>
+        limit margins to adjacent phoneme</label></div>
+    <div class="grp" title="Close any opening pinched between margins that is narrower than this, BEFORE smoothing. A thin sliver of open space would otherwise survive the Gaussian as a small gain bump; with this, gain turns on only in real open spaces (and their smoothed flanks).">
+      <span class="plabel">min opening [s]</span>
+      <input type="number" id="min_open_sec" value="0.10" step="0.01"></div>
+    <div class="grp" title="Which phoneme boundaries get zeroed: all = every boundary (default); nonnucleus = keep boundaries between two nucleus phonemes alive (melisma a|a etc. keeps its vibrato); none = no boundary zeroing (consonant margins only).">
+      <span class="plabel">boundary zeroing</span>
+      <select id="boundary_mode">
+        <option value="all">all (every boundary)</option>
+        <option value="nonnucleus">nonnucleus (keep melisma)</option>
+        <option value="none">none</option>
+      </select></div>
+    <div class="grp" title="Soft-clip applied to the residual BEFORE the band-pass. Identity up to ±threshold semitones; only larger excursions (pitch scoops, ~ -6 st) are compressed so they cannot ring through the filter and fake vibrato. Real vibrato (within ±2 st) is untouched. method = compression curve; the number after the threshold is the method parameter (tanh: saturation width E in st).">
+      <span class="plabel">softclip</span>
+      <select id="comp_method">
+        <option value="tanh">tanh</option><option value="log">log</option>
+        <option value="linear">linear</option>
+      </select>
+      <input type="number" id="comp_thresh_st" value="2.0" step="0.25"
+             title="Pass-through threshold in semitones (identity below this).">
+      <input type="number" id="comp_param" value="0.5" step="0.1"
+             title="Method parameter: tanh saturation width E [st] / log scale S [st] / linear ratio."></div>
+    <details class="grp"><summary class="plabel">advanced</summary>
+      <span class="plabel" title="Gaussian sigma of the baseline (note-pitch curve) smoothing. Upstream of the residual itself — normally keep at the training default (0.02 s).">baseline σ [s]</span>
+      <input type="number" id="baseline_sigma_sec" value="0.02" step="0.005"></details>
+    <button class="primary" onclick="run(0)">Run separation</button>
+    <span id="firinfo" class="plabel"></span>
+    <canvas id="respcv" width="340" height="120"
+            title="Effective band-pass gain: |H(f)|^2 (filtfilt runs the FIR forward AND backward, squaring the response)."
+            style="border:1px solid #dde; border-radius:4px; background:#fff"></canvas>
+  </div>
+  <div class="row">
+    <label>Order</label>
+    <select id="sort" onchange="run(0)">
+      <option value="name">alphabetical</option><option value="shuffle">shuffled</option>
+    </select>
+    <button onclick="reshuffle()">reshuffle</button>
+    <label>Search</label>
+    <input type="text" id="query" size="24" placeholder="part of a phrase name"
+           onkeydown="if(event.key==='Enter')run(0)">
+    <label>per page</label><input type="number" id="page_size" value="30" step="10" min="5">
+    <label>vib range ±</label><input type="number" id="vib_range" value="120" step="20"
+           onchange="redraw()"> cents
+    <span class="plabel">| lower pane: <span style="color:#d84040">— vibrato</span>
+      <span style="color:#4878d0">┅ gain (bottom=0, top=1)</span>
+      <span style="background:rgba(255,140,0,0.18);padding:0 5px">excluded (gain&lt;0.5)</span>
+      <span style="background:rgba(0,0,0,0.07);padding:0 5px">unvoiced</span></span>
+  </div>
+</div>
+
+<div id="pager"></div>
+<div id="cards"></div>
+<div id="pager2" style="margin-bottom:30px"></div>
+</div><!-- /viewvib -->
+
+<div id="viewpitch" hidden>
+<div class="panel">
+  <div class="pgrid row">
+    <div class="grp" title="Weight sigma in semitones. The representative value is a weighted mean over the nucleus; frames further than this from the running target get little weight, which is what rejects scoops and portamento. Too large = a plain average (the scoop drags the value); too small = only the flattest part counts.">
+      <span class="plabel">sigma_st [st]</span>
+      <input type="number" id="p_sigma_st" value="1.0" step="0.1"></div>
+    <div class="grp" title="Fixed-point iterations: target <- perceived. 0 = stop at the median (no weighting at all).">
+      <span class="plabel">n_iter</span>
+      <input type="number" id="p_n_iter" value="2" step="1" min="0"></div>
+    <div class="grp" title="Savitzky-Golay window used by the stability weight w_d (both definitions below use it).">
+      <span class="plabel">sg window [ms]</span>
+      <input type="number" id="p_sg_window_ms" value="55" step="5"></div>
+    <div class="grp" title="A nucleus with fewer voiced frames than this gets the devoiced handling instead of a measured value.">
+      <span class="plabel">min voiced</span>
+      <input type="number" id="p_min_voiced" value="3" step="1" min="1"></div>
+    <div class="grp" title="Devoiced vowels (A I U E O): interp = estimate on the gap-less interpolated F0 (default); neighbor = copy the nearest voiced nucleus; none = no value.">
+      <span class="plabel">devoiced</span>
+      <select id="p_devoiced_fill">
+        <option>interp</option><option>neighbor</option><option>none</option></select></div>
+    <div class="grp" title="Edge taper applied inside each nucleus before weighting. asym tapers the head more than the tail (a vowel's pitch settles after its onset); asym_adaptive keeps short nuclei rectangular so nothing is left.">
+      <span class="plabel">edge window</span>
+      <select id="p_edge_window">
+        <option>tukey</option><option>hann</option><option>asym</option>
+        <option>asym_adaptive</option></select></div>
+    <div class="grp" title="asym only: how much of the head is tapered."><span class="plabel">lead</span>
+      <input type="number" id="p_edge_lead_frac" value="0.8" step="0.1"></div>
+    <div class="grp" title="asym only: how much of the tail is tapered."><span class="plabel">trail</span>
+      <input type="number" id="p_edge_trail_frac" value="0.3" step="0.1"></div>
+  </div>
+  <div class="pgrid row">
+    <div class="grp" title="'slope' is what the bundled weights were trained with. 'blaauw' (w_d = 1/min(1+27*|f0 - savgol(f0)|,15)) measures how JAGGED a frame is, not how FLAT it is: a cubic fits a straight ramp almost exactly, so the residual vanishes and a scoop gets the HIGHEST weight. 'slope' measures |d f0/dt| from the Savitzky-Golay first derivative instead, so flat frames weigh most. Measured against the score on ritsu/natsume: long notes 50c-low 5.1%->3.7%, systematic bias -1.7c->-0.3c.">
+      <span class="plabel">w_d</span>
+      <select id="p_stability" onchange="runPitch(0)">
+        <option value="blaauw">blaauw (residual)</option>
+        <option value="slope">slope (flat = heavy)</option></select></div>
+    <div class="grp" title="slope only: w_d = 1/min(1 + k*|df/dt|, cap), df/dt in semitones per second.">
+      <span class="plabel">slope k</span>
+      <input type="number" id="p_slope_k" value="0.5" step="0.1" min="0"></div>
+    <div class="grp" title="slope only: lower bound of w_d is 1/cap.">
+      <span class="plabel">cap</span>
+      <input type="number" id="p_slope_cap" value="15" step="1" min="1"></div>
+    <div class="grp" title="asym_adaptive only: notes shorter than lo keep a rectangular window, notes longer than hi get the full asym taper.">
+      <span class="plabel">adapt lo/hi [ms]</span>
+      <input type="number" id="p_edge_adapt_lo_ms" value="70" step="10">
+      <input type="number" id="p_edge_adapt_hi_ms" value="150" step="10"></div>
+  </div>
+  <div class="pgrid row">
+    <div class="grp" title="Short-note PEAK detection, on in the bundled weights (300 ms). Rule: on a short arch-shaped note the value becomes the apex of the smoothed F0 inside the nucleus, in full; every other note is left exactly as it was. Nuclei at or above this length are never touched (long notes' peaks are overshoots, vibrato or scoops). 0 = off.">
+      <span class="plabel">peak: max len [ms]</span>
+      <input type="number" id="p_crest_max_ms" value="0" step="10" min="0"></div>
+    <div class="grp" title="The gate that keeps the rule from touching non-arch notes: apex minus the median of the F0 inside the nucleus must be at least this many semitones. An arch spends most of its time below its apex, so this is large; an overshoot spike is brief, so the median sits near the apex and it does not fire. Measured: prominence alone fires on 30-60% of short nuclei and wrecks them; adding this gate cuts firing to 6-12%, all on nuclei the weighted mean was getting badly wrong.">
+      <span class="plabel">apex − median ≥ [st]</span>
+      <input type="number" id="p_crest_depth_st" value="1.0" step="0.1" min="0"></div>
+    <div class="grp" title="Minimum prominence for a local maximum to count as a peak (semitones). Matters little once the apex-minus-median gate is on.">
+      <span class="plabel">prominence ≥ [st]</span>
+      <input type="number" id="p_crest_prom_st" value="1.0" step="0.1" min="0"></div>
+    <div class="grp" title="Smoothing window used only to locate the apex. Shorter than the 55 ms of w_d so a brief peak survives; 15 ms lands exactly on the raw maximum, 25 ms is 0.3-0.4 cents below it.">
+      <span class="plabel">peak smooth [ms]</span>
+      <input type="number" id="p_crest_sg_ms" value="25" step="5" min="0"></div>
+    <div class="grp" title="Land a little BELOW the apex: average the smoothed F0 over the contiguous stretch around the apex that stays within this many semitones of it - the mean of the time spent near the top. A rounded peak comes down more, a sharp spike barely moves. 0 = exact apex.">
+      <span class="plabel">peak band [st]</span>
+      <input type="number" id="p_crest_band_st" value="0" step="0.1" min="0"></div>
+    <div class="grp" title="Then subtract a fixed amount in cents. Applied after the band average.">
+      <span class="plabel">peak offset [cent]</span>
+      <input type="number" id="p_crest_offset_cent" value="0" step="5"></div>
+    <button class="primary" onclick="runPitch(0)">Compute values</button>
+    <span class="plabel" style="margin-left:6px">preset</span>
+    <button onclick="pPreset('real')" title="The plain setting: Blaauw's residual w_d, symmetric Tukey edges, no peak detection. The baseline to compare against.">real</button>
+    <button onclick="pPreset('slope')" title="Only w_d changes to the slope definition. Measured as a clear win on the score comparison for both singers.">slope</button>
+    <button onclick="pPreset('peak')" title="What the bundled weights were trained with (same as pitch: in configs/ja_example.yaml). slope + asymmetric edges + short-note peak detection: nuclei under 300 ms whose apex is at least 1 semitone above their own median get the mean of the top 0.75 st around the apex, in full. Everything else is untouched. Fires on ~10% of short nuclei. Measured on the score: fired nuclei go from 31% within 20c to 67% (natsume), 40% to 44% (ritsu).">+ peak</button>
+    <div class="grp" title="Shade each frame by how much it counted toward the weighted mean (w_e x w_d x w_t, normalised to 1 per nucleus). Orange columns and the darkness of the F0 line both follow it.">
+      <label style="font-weight:400"><input type="checkbox" id="p_show_w" checked
+        onchange="pRedraw()"> weight</label></div>
+    <span id="pinfo" class="plabel"></span>
+  </div>
+  <div class="row">
+    <label>Order</label>
+    <select id="p_sort" onchange="runPitch(0)">
+      <option value="name">alphabetical</option><option value="shuffle">shuffled</option>
+    </select>
+    <button onclick="pReshuffle()">reshuffle</button>
+    <label>Search</label>
+    <input type="text" id="p_query" size="24" placeholder="part of a phrase name"
+           onkeydown="if(event.key==='Enter')runPitch(0)">
+    <label>per page</label><input type="number" id="p_page_size" value="20" step="10" min="5">
+    <span class="plabel">| <span style="color:#3a5fd9">— F0</span>
+      <span style="color:#c33">▬ representative value</span>
+      <span style="color:#999">┈ equal-tempered semitones</span>
+      <span style="background:rgba(0,0,0,0.07);padding:0 5px">unvoiced</span></span>
+  </div>
+</div>
+
+<div id="ppager"></div>
+<div id="pcards"></div>
+<div id="ppager2" style="margin-bottom:30px"></div>
+</div><!-- /viewpitch -->
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+let seed = 0, page = 0, lastResp = null;
+
+fetch('/config').then(r => r.json()).then(c => { $('root').value = c.default_root; });
+
+// ── filter response chart (updates live on filter-parameter changes) ─────────
+async function drawResponse() {
+  try {
+    const r = await fetch('/filter_response', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({params: params()})});
+    if (!r.ok) return;
+    const d = await r.json();
+    const cv = $('respcv'), dpr = window.devicePixelRatio || 1;
+    const CW = 340, CH = 120, mL = 26, mB = 16, mT = 14, mR = 6;
+    cv.width = CW * dpr; cv.height = CH * dpr;
+    cv.style.width = CW + 'px'; cv.style.height = CH + 'px';
+    const g = cv.getContext('2d'); g.scale(dpr, dpr);
+    const W = CW - mL - mR, H = CH - mT - mB;
+    const fmax = d.freqs[d.freqs.length - 1];
+    const Xf = f => mL + f / fmax * W;
+    const Yg = v => mT + (1 - Math.min(v, 1.05) / 1.05) * H;
+    g.clearRect(0, 0, CW, CH);
+    g.font = '9px sans-serif'; g.textAlign = 'center';
+    for (let f = 0; f <= fmax; f++) {
+      g.strokeStyle = '#f0f0f4';
+      g.beginPath(); g.moveTo(Xf(f), mT); g.lineTo(Xf(f), mT + H); g.stroke();
+      if (f % 2 === 0) { g.fillStyle = '#99a'; g.fillText(f, Xf(f), CH - 4); }
+    }
+    for (const v of [0.5, 1.0]) {
+      g.strokeStyle = v === 1.0 ? '#dcd' : '#eee';
+      g.beginPath(); g.moveTo(mL, Yg(v)); g.lineTo(mL + W, Yg(v)); g.stroke();
+      g.fillStyle = '#99a'; g.textAlign = 'right'; g.fillText(v.toFixed(1), mL - 2, Yg(v) + 3);
+      g.textAlign = 'center';
+    }
+    g.fillStyle = 'rgba(72,120,208,0.07)';
+    g.fillRect(Xf(d.band_lo), mT, Xf(d.band_hi) - Xf(d.band_lo), H);
+    g.strokeStyle = 'rgba(72,120,208,0.5)';
+    for (const e of [d.band_lo, d.band_hi]) {
+      g.beginPath(); g.moveTo(Xf(e), mT); g.lineTo(Xf(e), mT + H); g.stroke();
+    }
+    g.strokeStyle = '#d84040'; g.lineWidth = 1.6;
+    g.beginPath();
+    for (let i = 0; i < d.freqs.length; i++) {
+      const x = Xf(d.freqs[i]), y = Yg(d.gain[i]);
+      i ? g.lineTo(x, y) : g.moveTo(x, y);
+    }
+    g.stroke(); g.lineWidth = 1;
+    g.fillStyle = '#556'; g.textAlign = 'left';
+    g.fillText(d.label + '  [Hz]', mL + 2, 10);
+  } catch (e) { /* server not up yet — ignore */ }
+}
+for (const id of ['band_lo', 'band_hi', 'fir_time_sec']) {
+  document.addEventListener('DOMContentLoaded', () => {
+    $(id).addEventListener('change', drawResponse);
+    $(id).addEventListener('input', drawResponse);
+  });
+}
+document.addEventListener('DOMContentLoaded', drawResponse);
+
+function setStatus(t, err) {
+  $('status').textContent = t;
+  $('status').style.color = err ? '#c33' : '#667';
+}
+
+async function scan() {
+  setStatus('scanning...');
+  try {
+    const r = await fetch('/scan', {method:'POST', headers:{'Content-Type':'application/json'},
+                                    body: JSON.stringify({root: $('root').value})});
+    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    const d = await r.json();
+    const box = $('dblist');
+    box.innerHTML = '';
+    if (!d.dbs.length) { setStatus('no DBs found', true); return; }
+    // 1 データベースずつ。混ぜると言語パックも frame_rate も一意に決まらない。
+    d.dbs.forEach((db, i) => {
+      const l = document.createElement('label');
+      l.className = 'dbbox';
+      l.innerHTML = `<input type="radio" name="db" value="${db.db}"${i ? '' : ' checked'}> ${db.db}` +
+                    ` <span style="color:#889">(${db.n_phrases} phrases / ${db.hours} h)</span>`;
+      box.appendChild(l);
+    });
+    setStatus(`${d.dbs.length} DBs`);
+  } catch (e) { setStatus('scan failed: ' + e.message, true); }
+}
+
+function params() {
+  return {
+    band_lo: +$('band_lo').value, band_hi: +$('band_hi').value,
+    fir_time_sec: +$('fir_time_sec').value,
+    cons_margin_pre_sec: +$('cons_margin_pre_sec').value,
+    cons_margin_post_sec: +$('cons_margin_post_sec').value,
+    boundary_margin_pre_sec: +$('boundary_margin_pre_sec').value,
+    boundary_margin_post_sec: +$('boundary_margin_post_sec').value,
+    gain_sigma_sec: +$('gain_sigma_sec').value,
+    boundary_mode: $('boundary_mode').value,
+    limit_margin_to_adjacent: $('limit_margin_to_adjacent').checked,
+    min_open_sec: +$('min_open_sec').value,
+    comp_method: $('comp_method').value,
+    comp_thresh_st: +$('comp_thresh_st').value,
+    comp_param: +$('comp_param').value,
+    baseline_sigma_sec: +$('baseline_sigma_sec').value,
+  };
+}
+
+function selectedDb() {
+  const r = $('dblist').querySelector('input[name="db"]:checked');
+  return r ? r.value : null;
+}
+
+function reshuffle() {
+  seed = Math.floor(Math.random() * 100000);
+  $('sort').value = 'shuffle';
+  run(0);
+}
+
+async function run(p) {
+  const db = selectedDb();
+  if (!db) { setStatus('select a database', true); return; }
+  page = p;
+  setStatus('computing...');
+  try {
+    const r = await fetch('/decompose', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({root: $('root').value, db, params: params(),
+                            sort: $('sort').value, seed,
+                            query: $('query').value, page,
+                            page_size: +$('page_size').value})});
+    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    lastResp = await r.json();
+    $('firinfo').textContent =
+      `lang pack: ${lastResp.lang || '?'}` +
+      `  ·  FIR ${lastResp.taps} taps / filtfilt min length ${lastResp.min_len_sec} s`;
+    redraw();
+    setStatus(`showing ${page * lastResp.page_size + 1}–` +
+              `${page * lastResp.page_size + lastResp.items.length}` +
+              ` of ${lastResp.total} phrases`);
+  } catch (e) { setStatus('failed: ' + e.message, true); }
+}
+
+function pagerHtml(el) {
+  if (!lastResp) { el.innerHTML = ''; return; }
+  const last = Math.max(0, Math.ceil(lastResp.total / lastResp.page_size) - 1);
+  el.innerHTML = '';
+  const mk = (t, p, dis) => {
+    const b = document.createElement('button');
+    b.textContent = t; b.disabled = dis; b.onclick = () => run(p);
+    el.appendChild(b);
+  };
+  mk('← prev', page - 1, page <= 0);
+  const s = document.createElement('span');
+  s.textContent = `page ${page + 1} / ${last + 1} (${lastResp.total} phrases)`;
+  el.appendChild(s);
+  mk('next →', page + 1, page >= last);
+}
+
+// ── cards ────────────────────────────────────────────────────────────────────
+const PPS = 14;          // px per semitone (uniform across ALL cards)
+const MAX_SPAN = 30;     // ranges wider than this get shrunk (badge shown)
+const W = 1080, ML = 44, MR = 8, LOWER_H = 96, LABEL_H = 16, GAP = 6;
+
+function redraw() {
+  pagerHtml($('pager')); pagerHtml($('pager2'));
+  const box = $('cards');
+  box.innerHTML = '';
+  if (!lastResp) return;
+  for (const it of lastResp.items) box.appendChild(card(it));
+}
+
+function card(it) {
+  const div = document.createElement('div');
+  div.className = 'card';
+  const n = it.n_points;
+  let lo = 1e9, hi = -1e9;
+  for (let i = 0; i < n; i++) {
+    if (it.uv[i]) { lo = Math.min(lo, it.f0_midi[i]); hi = Math.max(hi, it.f0_midi[i]); }
+    lo = Math.min(lo, it.plain_midi[i]); hi = Math.max(hi, it.plain_midi[i]);
+  }
+  if (lo > hi) { lo = 57; hi = 72; }
+  lo = Math.floor(lo) - 1; hi = Math.ceil(hi) + 1;
+  const span = hi - lo;
+  const shrink = span > MAX_SPAN;
+  const pps = shrink ? PPS * MAX_SPAN / span : PPS;
+  const upperH = Math.max(4 * PPS, span * pps);
+
+  div.innerHTML = `<h3>${it.db} / ${it.name} <span class="dim">(song: ${it.song} · ` +
+    `${it.dur_sec}s)</span> — vib RMS <span class="stat">${it.vib_rms_cents}</span> cents` +
+    ` <span class="dim" title="Fraction of frames the softclip actually compressed (|residual| > threshold). 0% means softclip is irrelevant for this phrase.">clip ${it.clip_pct}%</span>` +
+    (shrink ? ' <span class="badge">scaled down</span>' : '') +
+    (it.too_short ? ' <span class="badge" style="background:#d33">⚠ phrase &lt; FIR min length' +
+                    ' → vibrato all-zero (shorten the FIR window)</span>' : '') + '</h3>';
+
+  const H = LABEL_H + upperH + GAP + LOWER_H;
+  const cv = document.createElement('canvas');
+  const dpr = window.devicePixelRatio || 1;
+  cv.width = (W + ML + MR) * dpr; cv.height = H * dpr;
+  cv.style.width = (W + ML + MR) + 'px'; cv.style.height = H + 'px';
+  div.appendChild(cv);
+  const g = cv.getContext('2d');
+  g.scale(dpr, dpr);
+  const X = i => ML + (i / Math.max(1, n - 1)) * W;
+  const Yu = m => LABEL_H + (hi - m) * pps;                      // upper pane: MIDI -> y
+  const vr = Math.max(10, +$('vib_range').value || 120);
+  const y0l = LABEL_H + upperH + GAP;                            // lower pane top
+  const Yl = c => y0l + (1 - (c + vr) / (2 * vr)) * LOWER_H;     // lower pane: cents -> y
+
+  // unvoiced shading (both panes)
+  g.fillStyle = 'rgba(0,0,0,0.05)';
+  let i = 0;
+  while (i < n) {
+    if (!it.uv[i]) {
+      let s = i;
+      while (i < n && !it.uv[i]) i++;
+      g.fillRect(X(s), LABEL_H, X(i - 1) - X(s) + 1, upperH);
+      g.fillRect(X(s), y0l, X(i - 1) - X(s) + 1, LOWER_H);
+    } else i++;
+  }
+  // regions excluded from vibrato extraction (gain < 0.5) in light orange
+  if (it.gain) {
+    g.fillStyle = 'rgba(255,140,0,0.10)';
+    i = 0;
+    while (i < n) {
+      if (it.gain[i] < 0.5) {
+        let s = i;
+        while (i < n && it.gain[i] < 0.5) i++;
+        g.fillRect(X(s), LABEL_H, X(i - 1) - X(s) + 1, upperH);
+        g.fillRect(X(s), y0l, X(i - 1) - X(s) + 1, LOWER_H);
+      } else i++;
+    }
+  }
+  // semitone grid (upper)
+  for (let m = lo; m <= hi; m++) {
+    g.strokeStyle = (m % 12 === 0) ? '#ccd' : '#eee';
+    g.beginPath(); g.moveTo(ML, Yu(m)); g.lineTo(ML + W, Yu(m)); g.stroke();
+    if (m % 2 === 0 && pps >= 7) {
+      g.fillStyle = '#99a'; g.font = '9px sans-serif'; g.textAlign = 'right';
+      g.fillText(m, ML - 3, Yu(m) + 3);
+    }
+  }
+  // lower pane: frame + zero line
+  g.strokeStyle = '#ccc';
+  g.strokeRect(ML, y0l, W, LOWER_H);
+  g.strokeStyle = '#bbb';
+  g.beginPath(); g.moveTo(ML, Yl(0)); g.lineTo(ML + W, Yl(0)); g.stroke();
+  g.fillStyle = '#99a'; g.font = '9px sans-serif'; g.textAlign = 'right';
+  g.fillText('+' + vr, ML - 3, Yl(vr) + 8); g.fillText('-' + vr, ML - 3, Yl(-vr) - 1);
+
+  // phoneme boundaries (vertical lines through both panes) + labels
+  g.font = '10px sans-serif'; g.textAlign = 'center';
+  for (const b of it.bounds) {
+    const x1 = X(b.x), x2 = X(b.x2);
+    g.strokeStyle = 'rgba(60,60,90,0.22)';
+    g.beginPath(); g.moveTo(x1, LABEL_H); g.lineTo(x1, H); g.stroke();
+    if (x2 - x1 >= 13) {
+      g.fillStyle = '#445';
+      g.fillText(b.ph, (x1 + x2) / 2, LABEL_H - 4);
+    }
+  }
+  // curves: full F0 (thin) -> plain (bold) -> gain -> vibrato
+  const line = (arr, Y, style, width) => {
+    g.strokeStyle = style; g.lineWidth = width;
+    g.beginPath();
+    for (let j = 0; j < n; j++) {
+      const x = X(j), y = Y(arr[j]);
+      j ? g.lineTo(x, y) : g.moveTo(x, y);
+    }
+    g.stroke(); g.lineWidth = 1;
+  };
+  line(it.f0_midi, Yu, 'rgba(34,150,70,0.5)', 1);
+  line(it.plain_midi, Yu, '#c000c0', 2);
+  if (it.gain) {
+    const Yg = v => y0l + (1 - v) * LOWER_H;
+    g.fillStyle = 'rgba(72,120,208,0.08)';
+    g.beginPath(); g.moveTo(X(0), y0l + LOWER_H);
+    for (let j = 0; j < n; j++) g.lineTo(X(j), Yg(it.gain[j]));
+    g.lineTo(X(n - 1), y0l + LOWER_H); g.closePath(); g.fill();
+    g.strokeStyle = 'rgba(72,120,208,0.7)'; g.lineWidth = 1.2;
+    g.setLineDash([5, 3]);
+    g.beginPath();
+    for (let j = 0; j < n; j++) {
+      const x = X(j), y = Yg(it.gain[j]);
+      j ? g.lineTo(x, y) : g.moveTo(x, y);
+    }
+    g.stroke(); g.setLineDash([]); g.lineWidth = 1;
+  }
+  line(it.vib_cents.map(c => Math.max(-vr, Math.min(vr, c))), Yl, '#d84040', 1.4);
+  return div;
+}
+// ── pitch representative tab ────────────────────────────────────────────────
+let pResp = null, pPage = 0, pSeed = 0;
+
+function setTab(k) {
+  const vib = k === 'vib';
+  $('viewvib').hidden = !vib;  $('viewpitch').hidden = vib;
+  $('tab_vib').className = vib ? 'on' : '';
+  $('tab_pitch').className = vib ? '' : 'on';
+}
+
+// peak は configs/ja_example.yaml の pitch: と同じ = 配布ウェイトの学習設定。
+// edge_window も含めて指定する（省くと直前のプリセットの値が残る）。
+const P_PRESETS = {
+  real:  {edge_window: 'tukey', edge_lead_frac: 0.8, edge_trail_frac: 0.3, stability: 'blaauw', slope_k: 0.5, slope_cap: 15, crest_max_ms: 0,   crest_depth_st: 1.0, crest_prom_st: 1.0, crest_sg_ms: 25, crest_band_st: 0, crest_offset_cent: 0},
+  slope: {edge_window: 'tukey', edge_lead_frac: 0.8, edge_trail_frac: 0.3, stability: 'slope',  slope_k: 0.5, slope_cap: 15, crest_max_ms: 0,   crest_depth_st: 1.0, crest_prom_st: 1.0, crest_sg_ms: 25, crest_band_st: 0, crest_offset_cent: 0},
+  peak:  {edge_window: 'asym',  edge_lead_frac: 0.8, edge_trail_frac: 0.3, stability: 'slope',  slope_k: 0.5, slope_cap: 15, crest_max_ms: 300, crest_depth_st: 1.0, crest_prom_st: 1.0, crest_sg_ms: 25, crest_band_st: 0.75, crest_offset_cent: 0},
+};
+
+
+function pPreset(name) {
+  for (const [k, v] of Object.entries(P_PRESETS[name])) {
+    const el = $('p_' + k);
+    if (el) el.value = v;
+  }
+  runPitch(0);
+}
+
+function pParams() {
+  return {
+    sigma_st: +$('p_sigma_st').value, n_iter: +$('p_n_iter').value,
+    sg_window_ms: +$('p_sg_window_ms').value, min_voiced: +$('p_min_voiced').value,
+    devoiced_fill: $('p_devoiced_fill').value, edge_window: $('p_edge_window').value,
+    edge_lead_frac: +$('p_edge_lead_frac').value,
+    edge_trail_frac: +$('p_edge_trail_frac').value,
+    stability: $('p_stability').value,
+    slope_k: +$('p_slope_k').value, slope_cap: +$('p_slope_cap').value,
+    edge_adapt_lo_ms: +$('p_edge_adapt_lo_ms').value,
+    edge_adapt_hi_ms: +$('p_edge_adapt_hi_ms').value,
+    crest_max_ms: +$('p_crest_max_ms').value, crest_depth_st: +$('p_crest_depth_st').value,
+    crest_prom_st: +$('p_crest_prom_st').value, crest_sg_ms: +$('p_crest_sg_ms').value,
+    crest_band_st: +$('p_crest_band_st').value, crest_offset_cent: +$('p_crest_offset_cent').value,
+  };
+}
+
+function pReshuffle() { pSeed = Math.floor(Math.random() * 1e5); $('p_sort').value = 'shuffle'; runPitch(0); }
+
+async function runPitch(pg) {
+  const db = selectedDb();
+  if (!db) { setStatus('select a database', true); return; }
+  pPage = pg;
+  setStatus('computing representative values...');
+  try {
+    const r = await fetch('/pitch', {method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({root: $('root').value, db, params: pParams(),
+                            sort: $('p_sort').value, seed: pSeed,
+                            query: $('p_query').value, page: pPage,
+                            page_size: +$('p_page_size').value})});
+    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    pResp = await r.json();
+    $('pinfo').textContent = `lang pack: ${pResp.lang || '?'}`;
+    pRedraw();
+    setStatus(`showing ${pPage * pResp.page_size + 1}–` +
+              `${pPage * pResp.page_size + pResp.items.length} of ${pResp.total} phrases`);
+  } catch (e) { setStatus('failed: ' + e.message, true); }
+}
+
+
+function pPagerHtml(el) {
+  el.innerHTML = '';
+  if (!pResp) return;
+  const last = Math.max(0, Math.ceil(pResp.total / pResp.page_size) - 1);
+  const mk = (txt, pg, dis) => {
+    const b = document.createElement('button');
+    b.textContent = txt; b.disabled = dis; b.onclick = () => runPitch(pg);
+    el.appendChild(b);
+  };
+  mk('← prev', pPage - 1, pPage <= 0);
+  const s = document.createElement('span');
+  s.textContent = `page ${pPage + 1} / ${last + 1} (${pResp.total} phrases)`;
+  el.appendChild(s);
+  mk('next →', pPage + 1, pPage >= last);
+}
+
+function pRedraw() {
+  pPagerHtml($('ppager')); pPagerHtml($('ppager2'));
+  const box = $('pcards'); box.innerHTML = '';
+  if (!pResp) return;
+  for (const it of pResp.items) box.appendChild(pCard(it));
+}
+
+function pCard(it) {
+  const div = document.createElement('div');
+  div.className = 'card';
+  const n = it.n_points;
+  let lo = 1e9, hi = -1e9;
+  for (let i = 0; i < n; i++) if (it.uv[i]) { lo = Math.min(lo, it.f0_midi[i]); hi = Math.max(hi, it.f0_midi[i]); }
+  for (const s of it.segs) { lo = Math.min(lo, s.midi); hi = Math.max(hi, s.midi); }
+  if (lo > hi) { lo = 57; hi = 72; }
+  lo = Math.floor(lo) - 1; hi = Math.ceil(hi) + 1;
+  const span = hi - lo;
+  const shrink = span > MAX_SPAN;
+  const pps = shrink ? PPS * MAX_SPAN / span : PPS;
+  const upperH = Math.max(4 * PPS, span * pps);
+
+  div.innerHTML = `<h3>${it.db} / ${it.name} <span class="dim">(song: ${it.song} · ${it.dur_sec}s)</span>` +
+    ` <span class="dim">${it.n_values}/${it.n_nuclei} nuclei valued</span>` +
+    (shrink ? ' <span class="badge">scaled down</span>' : '') + '</h3>';
+
+  const H = LABEL_H + upperH + GAP;
+  const cv = document.createElement('canvas');
+  const dpr = window.devicePixelRatio || 1;
+  cv.width = (W + ML + MR) * dpr; cv.height = H * dpr;
+  cv.style.width = (W + ML + MR) + 'px'; cv.style.height = H + 'px';
+  div.appendChild(cv);
+  const g = cv.getContext('2d');
+  g.scale(dpr, dpr);
+  const X = i => ML + (i / Math.max(1, n - 1)) * W;
+  const Y = m => LABEL_H + (hi - m) * pps;
+
+  // unvoiced shading
+  g.fillStyle = 'rgba(0,0,0,0.07)';
+  for (let i = 0; i < n; i++) if (!it.uv[i]) g.fillRect(X(i), LABEL_H, Math.max(1, W / n), upperH);
+
+  // equal-tempered semitone grid; C is emphasised and labelled
+  for (let m = Math.ceil(lo); m <= hi; m++) {
+    const isC = ((m % 12) + 12) % 12 === 0;
+    g.strokeStyle = isC ? 'rgba(90,90,110,0.45)' : 'rgba(150,150,170,0.22)';
+    g.lineWidth = 1;
+    g.beginPath(); g.moveTo(ML, Y(m) + .5); g.lineTo(ML + W, Y(m) + .5); g.stroke();
+    if (isC || span <= 16) {
+      g.fillStyle = isC ? '#667' : '#aab';
+      g.font = '9px sans-serif'; g.textAlign = 'right';
+      g.fillText(isC ? 'C' + (Math.round(m) / 12 - 1 | 0) : String(m), ML - 4, Y(m) + 3);
+    }
+  }
+
+  // phoneme boundaries + labels
+  g.strokeStyle = 'rgba(120,120,140,0.35)';
+  g.font = '9px sans-serif'; g.textAlign = 'center';
+  for (const b of it.bounds) {
+    g.beginPath(); g.moveTo(X(b.x) + .5, LABEL_H); g.lineTo(X(b.x) + .5, LABEL_H + upperH); g.stroke();
+    if (b.x2 - b.x > 3) { g.fillStyle = '#889'; g.fillText(b.ph, (X(b.x) + X(b.x2)) / 2, LABEL_H - 4); }
+  }
+
+  // weight shading: how much each frame counted toward the weighted mean.
+  // Normalised to 1 per nucleus, so it answers "where inside THIS note did the value
+  // come from" — not "which note weighs more". Drawn as a column behind the curve so
+  // the F0 itself stays readable.
+  const showW = $('p_show_w').checked && it.w;
+  if (showW) {
+    const bw = Math.max(1, W / n);
+    for (let i = 0; i < n; i++) {
+      const w = it.w[i];
+      if (w <= 0.01) continue;
+      g.fillStyle = `rgba(232,140,20,${0.10 + 0.45 * w})`;
+      const h = upperH * 0.10 + upperH * 0.20 * w;          // 高さも重みで伸ばす
+      g.fillRect(X(i), LABEL_H + upperH - h, bw, h);
+    }
+  }
+
+  // F0 (voiced only). 重み表示が ON のときは、線自体も重みで濃くする
+  g.lineWidth = 1.2;
+  if (!showW) {
+    g.strokeStyle = '#3a5fd9';
+    g.beginPath(); let pen = false;
+    for (let i = 0; i < n; i++) {
+      if (!it.uv[i]) { pen = false; continue; }
+      const x = X(i), y = Y(it.f0_midi[i]);
+      if (pen) g.lineTo(x, y); else { g.moveTo(x, y); pen = true; }
+    }
+    g.stroke();
+  } else {
+    for (let i = 1; i < n; i++) {
+      if (!it.uv[i] || !it.uv[i - 1]) continue;
+      const w = Math.max(it.w[i], it.w[i - 1]);
+      g.strokeStyle = `rgba(58,95,217,${0.22 + 0.78 * w})`;
+      g.lineWidth = 1.0 + 1.6 * w;
+      g.beginPath();
+      g.moveTo(X(i - 1), Y(it.f0_midi[i - 1])); g.lineTo(X(i), Y(it.f0_midi[i]));
+      g.stroke();
+    }
+  }
+
+  // representative value: one horizontal bar per nucleus, labelled with its offset
+  g.lineWidth = 2.5; g.textAlign = 'center'; g.font = '9px sans-serif';
+  let nMixed = 0;
+  for (const s of it.segs) {
+    const y = Y(s.midi);
+    // 短ノート混合が効いた核は色を変える（alpha が大きいほど濃い緑）
+    const a = s.alpha || 0;
+    if (a > 0) { nMixed++; g.strokeStyle = `rgba(20,130,90,${0.45 + 0.55 * a})`; }
+    else g.strokeStyle = '#c33';
+    g.lineWidth = a > 0 ? 3.2 : 2.5;
+    g.beginPath(); g.moveTo(X(s.x), y); g.lineTo(X(s.x2), y); g.stroke();
+    if (s.x2 - s.x > 6) {
+      g.fillStyle = a > 0 ? '#148' : (Math.abs(s.cents_off) > 30 ? '#c33' : '#988');
+      g.fillText((s.cents_off > 0 ? '+' : '') + s.cents_off, (X(s.x) + X(s.x2)) / 2, y - 4);
+    }
+  }
+  g.lineWidth = 2.5;
+  if (nMixed) {
+    const hh = div.querySelector('h3');
+    hh.insertAdjacentHTML('beforeend',
+      ` <span class="dim" style="color:#148">peak detected on ${nMixed}/${it.segs.length}</span>`);
+  }
+  return div;
+}
+
+</script>
+</body>
+</html>
