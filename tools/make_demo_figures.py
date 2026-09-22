@@ -32,7 +32,7 @@ from svs.score_io import load_score                               # noqa: E402
 
 OUT = REPO / "docs" / "fig"
 SEED = 0
-SPK = [(0, "ONIKU Kurumi", 0, "#2f6fae"),
+SPK = [(0, "Oniku Kurumi", 0, "#2f6fae"),
        (1, "Natsume Yuuri  (−5)", -5, "#c2702d"),
        (2, "Namine Ritsu", 0, "#3f8f6a")]
 INK, SUB, GRID = "#2b3a4d", "#6c757d", "#e4e9ee"

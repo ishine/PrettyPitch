@@ -38,7 +38,7 @@ To write words instead, build a table limited to your vocabulary and pass it wit
 
 **The bundled weights cannot sing English, though.** The score is read, but the F0 model, the consonant-length model and the acoustic model were all trained on three Japanese singers, and English phonemes are not in their vocabulary (it stops with `phonemes not in the model vocab`). Singing English means training on English data — `configs/recipes/example_filled_en.yaml` is the place to start.
 
-For reference, the 56 MusicXML files bundled with the ONIKU KURUMI singing database — all written by MuseScore 3.4.2 — are read without a single warning. 348 of their 6931 notes carry a tie.
+For reference, the 56 MusicXML files bundled with the Oniku Kurumi singing database — all written by MuseScore 3.4.2 — are read without a single warning. 348 of their 6931 notes carry a tie.
 
 ## 2. Decide the durations
 
@@ -68,7 +68,7 @@ The acoustic model does not take v/uv as a condition, but the vocoder does. It u
 
 **Nothing touches the waveform.** The level is already settled on the mel, so the waveform that comes out is left as it is. Measured across songs and speakers, it spans 1.55 dB and peaks between 0.32 and 0.68. `--normalize peak` restores the old behaviour of scaling the loudest sample to 0.95, if you want it.
 
-## What is learned and what is a rule
+## Which parts are machine-learned and which are rule-based
 
 | Learned | Fixed procedure | Not needed at all |
 |---|---|---|
