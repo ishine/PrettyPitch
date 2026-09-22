@@ -167,12 +167,12 @@ def _mel_frame_limit(mel: np.ndarray, frame_rate: float,
                      thr: float = _MEL_FRAME_CLIP_THR) -> np.ndarray:
     """フレーム単位の mel リミッタ。**ボコーダの内部クリップを防ぐのはここだけ。**
 
-    同梱の NHVSing ONNX は出力直前に `[-1, 1]` のクリップを持つ。mel が熱いフレームでは
+    同梱の NHVSing ONNX は出力直前に `[-1, 1]` のクリップを持つ。mel の音量が大きいフレームでは
     そこで波形が潰れ、後段で何をしても取り返せない。だから抑えるならボコーダに入る前、
     つまり mel の段でなければならない。
 
     各フレーム t の `e[t] = mean_bins exp(mel[:, t])` が thr を超えたら、そのフレームの
-    全ビンを `ln(thr / e[t])` だけ一律に下げる。熱いフレームだけを叩くので、通常の音量は
+    全ビンを `ln(thr / e[t])` だけ一律に下げる。音量の大きいフレームだけを叩くので、通常の音量は
     そのまま残る。下げ量は時間方向に平滑してポンピングとクリックを避ける。
 
     リリースを 250ms と長めに取るのは、ロングトーンが不自然に沈むのを避けるため。短い
@@ -229,7 +229,7 @@ def _vocode(ctx, mel: np.ndarray, logf0: np.ndarray, uv: np.ndarray) -> np.ndarr
     ここでは生のまま受け取り、正規化は曲全体に 1 度だけ掛ける（`_normalize`）。
     """
     mel = np.asarray(mel) + _mel_loudness_offset(mel, uv)   # 粗いラウドネス合わせ
-    mel = _mel_frame_limit(mel, float(ctx.frame_rate))     # そのうえで熱いフレームを叩く
+    mel = _mel_frame_limit(mel, float(ctx.frame_rate))     # そのうえで音量の大きいフレームを叩く
     m = np.ascontiguousarray(np.asarray(mel).T[None], dtype=np.float32)      # [1,T,128]
     T = m.shape[1]
 

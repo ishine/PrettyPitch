@@ -17,7 +17,6 @@ This one substitution buys several things at once:
 - **No score alignment.** Preprocessing uses the lab and the wav as they are.
 - **Multilingual support is straightforward.** A language is defined by one language pack, `dict/<lang>.yaml`, named by `lang:` in the training config and in the preprocessing recipe. SVS rendering (`svs/`) additionally needs a lyric-to-phoneme table `dict/<lang>.mora` (`--mora_table`). It is not fully language-agnostic — see [Notes](#notes).
 - **Off-pitch singers are fine as training data.** The teacher is the residual against the pitch that was actually sung, so out-of-tune singing does not corrupt training. At inference the model sings the pitch the user asks for.
-- **Pitch is continuous.** Because the representative values are the pitch input during training, fractional pitches such as 61.3 are ordinary inputs.
 
 The model itself is a 3-channel generative model. A DiffWave-style DDPM (default 10 steps, x0 direct prediction) and rectified flow (1 step) are both available through `model.arch` in the config. It generates plain (expression), vibrato and v/uv, reconstructed as `F0 = 2^(baseline + plain + vibrato)` (next section). Speakers use a low-dimensional bank (spk_dim=32); styles (e.g. Ritsu default / normal / soft) are additive embeddings.
 
@@ -218,8 +217,6 @@ Thanks to the datasets used to train this model, and to the related projects.
 - pitch-benchmark (Lars Nieradzik; the two files in `preprocess/algorithms/` come from it) — https://github.com/lars76/pitch-benchmark
 - RMVPE (the F0 model itself) — https://github.com/Dream-High/RMVPE
 - CREPE (`to_local_average_cents()`, reached via RMVPE) — https://github.com/marl/crepe
-- NHVSing (the source of the bundled vocoder `nhv_v3_2_1.onnx`) — https://github.com/wavtechyukky/NHVSing
-- LeapSinger (the acoustic model used in the singing demo; its inference code is imported from a sibling checkout) — https://github.com/wavtechyukky/LeapSinger
 
 The distributed multi-speaker models display the credits above, following each database's terms. For Natsume Yuuri, we display **database production: アマノケイ / voice provider: 霧野蒼太**, and the "Terms of use for Natsume Yuuri's output audio" is bundled next to the models in `checkpoints/` (`checkpoints/CREDITS.txt` and `checkpoints/夏目悠李_利用規約.txt`).
 
@@ -228,7 +225,7 @@ The distributed multi-speaker models display the credits above, following each d
 The code is MIT (`LICENSE`). The following is **not** covered by MIT; see [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for the details.
 
 - **The bundled weights `checkpoints/f0_3singer.pt` and `checkpoints/cons_dur_3singer.pt`** — trained on the Oniku Kurumi, Natsume Yuuri and Namine Ritsu singing databases and governed by each database's terms of use (personal, non-commercial use is the premise; credits and links are in `checkpoints/CREDITS.txt`, and the full Natsume Yuuri terms are in `checkpoints/夏目悠李_利用規約.txt`). Keep those two files with the models if you redistribute them.
-- **The bundled vocoder `checkpoints/nhv_v3_2_1.onnx`** — a build of [NHVSing](https://github.com/wavtechyukky/NHVSing) (MIT, Copyright (c) 2025 wavtechyukky), trained on the same three databases.
+- **The bundled vocoder `checkpoints/nhv_v3_2_1.onnx`** — weights built with our own [NHVSing](https://github.com/wavtechyukky/NHVSing) (MIT). The code is MIT, but **the weights were trained on a different and wider set of non-commercial datasets than the two above, so they cannot be used commercially.** The NHVSing README lists the datasets and their terms.
 
 - **`preprocess/algorithms/base.py` and `preprocess/algorithms/rmvpe.py`** — both taken verbatim from [pitch-benchmark](https://github.com/lars76/pitch-benchmark) (MIT, Copyright (c) 2025 Lars Nieradzik). Their notice is in `LICENSES/pitch-benchmark-MIT.txt` and must be kept when redistributing. `base.py` is MIT like the rest of this repository.
 - `rmvpe.py` is not: the RMVPE model inside it is [Apache-2.0 upstream](https://github.com/Dream-High/RMVPE), so that one file is distributed under Apache-2.0 (full text in `LICENSES/Apache-2.0.txt`). Its `to_local_average_cents()` originates in [CREPE](https://github.com/marl/crepe); that MIT notice is in `LICENSES/crepe-MIT.txt`. The `rmvpe.pt` weights are downloaded at run time and are not distributed here.

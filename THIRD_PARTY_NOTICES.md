@@ -8,7 +8,7 @@ PrettyPitch is released under the MIT license (see [`LICENSE`](LICENSE)). A few 
 | RMVPE pitch estimator | `preprocess/algorithms/rmvpe.py` | Apache-2.0, plus the MIT notices below |
 | RMVPE weights `rmvpe.pt` | downloaded at run time, **not** in this repo | see §3 |
 | Bundled F0 and consonant-duration models | `checkpoints/f0_3singer.pt`, `checkpoints/cons_dur_3singer.pt` | each singing database's terms of use — see §4 and `checkpoints/CREDITS.txt` |
-| Bundled neural vocoder | `checkpoints/nhv_v3_2_1.onnx` | NHVSing project (MIT) — see §5 |
+| Bundled neural vocoder | `checkpoints/nhv_v3_2_1.onnx` | non-commercial (its own training data) — see §5 |
 | Training data (singing databases) | **not** in this repo | each singing database's terms of use |
 
 Everything else in this repository is our own work and is MIT.
@@ -57,17 +57,23 @@ which is a third-party mirror (`lj1995` is the RVC author). The weights originat
 
 ## 4. Bundled model weights and training data
 
-Two trained models are distributed in this repository:
+Two trained models here were trained on the three singing databases:
 
 - `checkpoints/f0_3singer.pt` — the F0 model (3 speakers × 3 styles)
 - `checkpoints/cons_dur_3singer.pt` — the consonant-duration model
+
+(The bundled vocoder was trained on a different set of data — see §5.)
 
 Both were trained on three singing-voice databases: 御丹宮くるみ (Oniku Kurumi), 夏目悠李(Natsume Yuuri; database production アマノケイ, voice provider 霧野蒼太) and 波音リツ(Namine Ritsu). The recordings themselves are **not** distributed. Each database's terms of use govern what you may do with the models — typically requiring credit and restricting commercial use — and they are **not** covered by this repository's MIT license. `checkpoints/CREDITS.txt` lists the credits and links, and `checkpoints/夏目悠李_利用規約.txt` is the full Natsume Yuuri terms of use, bundled verbatim as those terms require. Keep both files with the models if you redistribute them.
 
 If you train a model yourself with a singing-voice database, the same applies: check that database's terms before redistributing anything you train.
 
-## 5. NHVSing vocoder (`checkpoints/nhv_v3_2_1.onnx`)
+## 5. Bundled vocoder (`checkpoints/nhv_v3_2_1.onnx`)
 
-`checkpoints/nhv_v3_2_1.onnx` is a built artifact of the [NHVSing](https://github.com/wavtechyukky/NHVSing/) project (also ours; MIT, Copyright (c) 2025 wavtechyukky). It is governed by that project's license and, having been trained on the same three databases as the models above, by those databases' terms of use as well.
+The vocoder comes from [NHVSing](https://github.com/wavtechyukky/NHVSing), which is also ours and also MIT. The **code** is MIT like the rest.
 
-The LeapSinger acoustic model used by the singing demo is **not** distributed here; its inference code is imported at run time from a sibling checkout of [LeapSinger](https://github.com/wavtechyukky/LeapSinger) (MIT) and its weights come from that project's release.
+The **weights** are a separate matter. They were not trained on the three databases above but on a wider set of non-commercial singing datasets, so **they cannot be used commercially**. The NHVSing README lists those datasets with links to each one's terms; check them at the source before redistributing anything built with this vocoder.
+
+## 6. LeapSinger acoustic model
+
+The LeapSinger acoustic model used by the singing demo is **not** distributed here; its inference code is imported at run time from a sibling checkout of [LeapSinger](https://github.com/wavtechyukky/LeapSinger) (ours, MIT) and its weights come from that project's release, under that project's terms.

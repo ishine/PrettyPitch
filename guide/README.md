@@ -19,7 +19,7 @@ PrettyPitch の仕組みを説明する資料をここにまとめています�
 | [vibrato_separation.md](vibrato_separation.md) | 残差から plain と vibrato を分ける手順。ソフトクリップ・帯域・ゲイン |
 | [pitch_correction.md](pitch_correction.md) | 生成時のピッチ補正 2 段の原理 |
 
-## 道具
+## ツール
 
 | 資料 | 内容 |
 |---|---|

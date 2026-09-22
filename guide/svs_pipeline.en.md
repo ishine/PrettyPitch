@@ -64,7 +64,7 @@ The acoustic model does not take v/uv as a condition, but the vocoder does. It u
 
 **Loudness matching.** A constant is added to the mel so that the size of its voiced frames meets a target. The vocoder was trained on data normalised to an active RMS of 0.111, and it is at its best when driven at that level. Raising the level on the waveform instead raises the vocoder's own noise along with the signal. Measured without this step, the waveform had to be amplified by up to 2.3 times.
 
-**A frame limiter.** Any frame that is still too hot is brought down on its own. The bundled vocoder clips its output to the range −1 to 1 right at the end, so a hot mel gets crushed there. **That cannot be undone afterwards.** Anything that holds the level down has to act before the vocoder. In practice it fires on fewer than 0.1 per cent of frames and sits there as a guard.
+**A frame limiter.** Any frame that is still too loud is brought down on its own. The bundled vocoder clips its output to the range −1 to 1 right at the end, so a loud mel gets crushed there. In practice it fires on fewer than 0.1 per cent of frames and sits there as a guard.
 
 **Nothing touches the waveform.** The level is already settled on the mel, so the waveform that comes out is left as it is. Measured across songs and speakers, it spans 1.55 dB and peaks between 0.32 and 0.68. `--normalize peak` restores the old behaviour of scaling the loudest sample to 0.95, if you want it.
 

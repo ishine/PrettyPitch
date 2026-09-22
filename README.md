@@ -12,12 +12,11 @@
 
 ノートの音高の代わりに、母音など「核」となる音素（音節核: a i u e o A I U E O N）の区間から、実際に歌われた F0 の**代表値**を推定して使います。推定は Blaauw & Bonada (2017) の知覚ピッチ重みによる重み付き平均を改良したものです。安定度は F0 の傾き（|dF0/dt|）で測り、一瞬だけ山なりに歌われる短いノート（< 300 ms）は山の頂点付近を代表値にします。
 
-この置き換えで、次が同時に成り立ちます。
+この置き換えで、次のことが成り立ちます。
 
 - **楽譜との照合作業がなくなる。** 前処理は lab と wav をそのまま使うだけ。
 - **多言語対応がしやすい。** 言語は `dict/<lang>.yaml`（言語パック）1 つが定義し、学習 config の `lang:` と前処理レシピの `lang:` で指定します。SVS レンダリング（`svs/`）はさらに歌詞→音素の `dict/<lang>.mora` が要ります（`--mora_table`）。完全に言語非依存ではない点は「[注意](#注意)」を参照。
 - **音程の良くない歌唱データでも学習できる。** 教師は「実際に歌われたピッチ」との残差なので、楽譜からズレた歌い方でも学習は壊れない。生成時はユーザーが指定した音高どおりに歌う。
-- **音高は連続値。** F0 の代表値を学習時の入力音高とするため、例えば 61.3 のような中間音高を使用します。
 
 モデル本体は 3ch の生成モデルです。DiffWave 型 DDPM（既定 10 step・x0 直接予測）と rectified flow（1 step）を config の `model.arch` で選べます。plain（抑揚）・vibrato（ビブラート）・v/uv の 3 チャンネルを生成し、`F0 = 2^(baseline + plain + vibrato)` で復元します（次節）。話者は低次元バンク（spk_dim=32）、スタイル（例: リツ 無印/normal/soft）は埋め込みの加算で切り替えます。
 
@@ -226,8 +225,6 @@ python -m svs.render examples/kirakiraboshi.ust -o out/kirakiraboshi.wav --spk_i
 - pitch-benchmark（Lars Nieradzik。`preprocess/algorithms/` の 2 ファイルはここからの取り込みです） — https://github.com/lars76/pitch-benchmark
 - RMVPE（F0 抽出モデル本体） — https://github.com/Dream-High/RMVPE
 - CREPE（RMVPE 経由で `to_local_average_cents()` を利用） — https://github.com/marl/crepe
-- NHVSing（同梱ボコーダ `nhv_v3_2_1.onnx` の出どころ） — https://github.com/wavtechyukky/NHVSing
-- LeapSinger（歌声デモで組み合わせる音響モデル。推論コードを隣のチェックアウトから読みます） — https://github.com/wavtechyukky/LeapSinger
 
 配布する多話者モデルには、各データベースの規約に従って上記のクレジットを表示します。夏目悠李については **歌声 DB 制作: アマノケイ／音声提供者: 霧野蒼太** を表示し、「夏目悠李の出力音声に関する利用規約」をモデルと同じ `checkpoints/` に同梱しています（`checkpoints/CREDITS.txt` と `checkpoints/夏目悠李_利用規約.txt`）。
 
@@ -236,7 +233,7 @@ python -m svs.render examples/kirakiraboshi.ust -o out/kirakiraboshi.wav --spk_i
 コードは MIT です（`LICENSE`）。ただし次は MIT の対象外です。詳細は [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) にあります。
 
 - **同梱ウェイト `checkpoints/f0_3singer.pt` と `checkpoints/cons_dur_3singer.pt`** — 御丹宮くるみ・夏目悠李・波音リツの歌声データベースで学習したモデルで、各データベースの利用規約に従います（個人・非商用が前提。クレジットと URL は `checkpoints/CREDITS.txt`、夏目悠李の規約全文は `checkpoints/夏目悠李_利用規約.txt`）。再配布するときはこの 2 ファイルをモデルと一緒に配布してください。
-- **同梱ボコーダ `checkpoints/nhv_v3_2_1.onnx`** — [NHVSing](https://github.com/wavtechyukky/NHVSing)（MIT, Copyright (c) 2025 wavtechyukky）の成果物で、同じ 3 データベースで学習しています。
+- **同梱ボコーダ `checkpoints/nhv_v3_2_1.onnx`** — 私たちの [NHVSing](https://github.com/wavtechyukky/NHVSing)（MIT）で作ったウェイトです。コードは MIT ですが、**ウェイトは上の 2 つとは別の、より広い非商用データセット群で学習しているため商用利用できません。**データセットの一覧と各条件は NHVSing の README を参照してください。
 
 - **`preprocess/algorithms/base.py` と `preprocess/algorithms/rmvpe.py`** — どちらも [pitch-benchmark](https://github.com/lars76/pitch-benchmark)（MIT, Copyright (c) 2025 Lars Nieradzik）からそのまま取り込んだファイルです。著作権表示は `LICENSES/pitch-benchmark-MIT.txt` にあり、再配布時はこれを保持してください。`base.py` は本リポジトリと同じ MIT です。
 - `rmvpe.py` は違います。中の RMVPE モデルは [上流](https://github.com/Dream-High/RMVPE) が **Apache-2.0** なので、このファイルだけ Apache-2.0 で配布します（全文 `LICENSES/Apache-2.0.txt`）。`to_local_average_cents()` は [CREPE](https://github.com/marl/crepe) 由来で、その MIT 表示は `LICENSES/crepe-MIT.txt` にあります。ウェイト `rmvpe.pt` は初回実行時にダウンロードするもので、本リポジトリには含みません。
