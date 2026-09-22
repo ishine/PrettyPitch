@@ -53,14 +53,14 @@ def load_model(ckpt_path: str, device: str = "cpu"):
     return model, cfg
 
 
-def synthesize_f0(model, cfg: dict, score: dict, device: str = "cpu",
-                  seed: int | None = None, plain_scale=1.0,
-                  vib_scale=1.0, correction: bool = True,
-                  cons_weight: float = 0.0, hann_alpha: float = 0.8,
-                  hann_window: str = "tukey", hann_lead_taper: float = 0.6,
-                  hann_trail_taper: float = 0.1,
-                  infer_steps: int | None = None, style_mix=None):
-    """Generate an F0 curve for one phrase from a score-free note sheet.
+def generate_f0(model, cfg: dict, score: dict, device: str = "cpu",
+                seed: int | None = None, plain_scale=1.0, vib_scale=1.0,
+                infer_steps: int | None = None, style_mix=None):
+    """Generate one phrase's F0 layers — **no pitch correction**.
+
+    This is the model on its own: baseline + expression + vibrato + v/uv, exactly as the
+    network produced them. Use ``correct_f0`` afterwards to pull the pitch onto the score,
+    or ``synthesize_f0`` to do both in one call.
 
     Args:
         model, cfg: what ``load_model`` returned.
@@ -71,10 +71,6 @@ def synthesize_f0(model, cfg: dict, score: dict, device: str = "cpu",
         plain_scale, vib_scale: multiply the expression (plain) and vibrato deviations.
             A float applies to the whole phrase; an array of length ≥ T (frames)
             applies per frame, which is how per-note or per-phoneme control is done.
-        correction, cons_weight: stage-1 pitch correction (Blaauw, constant per note).
-        hann_alpha, hann_window, hann_lead_taper, hann_trail_taper: stage-2 correction
-            (asymmetric Tukey window by default; ``hann_alpha=0`` turns it off).
-            Both stages act on plain only, so vibrato keeps its shape.
         infer_steps: Euler steps for a rectified-flow model (ignored for DDPM).
         style_mix: optional ``[n_styles]`` blend weights (continuous style). One-hot
             equals ``style_id``; when given it takes precedence over ``score["style_id"]``.
@@ -84,6 +80,10 @@ def synthesize_f0(model, cfg: dict, score: dict, device: str = "cpu",
         use ``uv``), ``uv`` (1 = voiced), ``baseline_log2``, ``plain_delta`` and
         ``vib_delta`` (log2 deviations, scales already applied), ``note_boundaries_pf``
         (True at each note's first frame), and ``frame_rate``.
+
+        It also carries what ``correct_f0`` needs, so the two stages stay in step without
+        rebuilding anything: ``plain_hz`` (the uncorrected curve the correction acts on),
+        ``phonemes_pf``, ``note_pitches_pf`` and ``frame_is_pau``.
     """
     frame_rate = float(cfg["frame_rate"])
     ph2id = {p: i for i, p in enumerate(cfg["phonemes"])}
@@ -165,17 +165,6 @@ def synthesize_f0(model, cfg: dict, score: dict, device: str = "cpu",
     frame_is_pau = np.array([p in _SILENCE_PHS for p in phonemes_pf])
 
     plain_hz = np.power(2.0, baseline + plain_delta).astype(np.float32)
-    if correction:
-        plain_hz, _notes = apply_pitch_correction(
-            plain_hz, ~frame_is_pau, phonemes_pf, note_pitches_pf, note_bnd_pf,
-            frame_rate=frame_rate, cons_weight=cons_weight, nucleus_phs=nucleus_phs)
-    if hann_alpha > 0.0:
-        plain_hz = apply_hann_pitch_correction(
-            plain_hz, ~frame_is_pau, phonemes_pf, note_pitches_pf, note_bnd_pf,
-            frame_rate=frame_rate, alpha=hann_alpha, nucleus_phs=nucleus_phs,
-            window=hann_window, lead_taper=hann_lead_taper,
-            trail_taper=hann_trail_taper)
-
     f0_hz = (plain_hz * np.power(2.0, vib_delta)).astype(np.float32)
     voiced = ((vuv > 0.5) & ~frame_is_pau).astype(np.float32)
 
@@ -186,7 +175,74 @@ def synthesize_f0(model, cfg: dict, score: dict, device: str = "cpu",
         "vib_delta": vib_delta.astype(np.float32),
         "note_boundaries_pf": np.asarray(note_bnd_pf, dtype=bool),
         "frame_rate": np.float32(frame_rate),
+        # ↓ correct_f0 が使う材料。補正は plain（ビブラートを掛け戻す前）に当たるので、
+        #   f0_hz ではなく plain_hz を持ち回る。
+        "plain_hz": plain_hz,
+        "phonemes_pf": np.asarray(phonemes_pf),
+        "note_pitches_pf": np.asarray(note_pitches_pf, dtype=np.float64),
+        "frame_is_pau": np.asarray(frame_is_pau, dtype=bool),
+        "nucleus_phs": nucleus_phs,
     }
+
+
+def correct_f0(out: dict, correction: bool = True, cons_weight: float = 0.0,
+               hann_alpha: float = 0.8, hann_window: str = "tukey",
+               hann_lead_taper: float = 0.6, hann_trail_taper: float = 0.1) -> dict:
+    """Pull the generated pitch onto the score — the two fixed correction stages.
+
+    ``out`` is what ``generate_f0`` returned; a new dict is returned with ``f0_hz`` and
+    ``plain_hz`` replaced. Nothing else changes, and ``out`` itself is left alone.
+
+    Both stages act on **plain only**, so the vibrato keeps its shape: the correction moves
+    the note's pitch without flattening the oscillation on top of it. The scoop into a note
+    and the fall at its end survive for the same reason — stage 1 is one constant per note.
+
+    Args:
+        correction, cons_weight: stage 1 — Blaauw's perceived pitch, one constant offset
+            per note. ``correction=False`` turns it off.
+        hann_alpha, hann_window, hann_lead_taper, hann_trail_taper: stage 2 — a windowed
+            pull toward the note pitch (asymmetric Tukey by default).
+            ``hann_alpha=0`` turns it off.
+
+    See guide/pitch_correction.md for what each stage does and why.
+    """
+    plain_hz = out["plain_hz"]
+    frame_rate = float(out["frame_rate"])
+    voiced = ~out["frame_is_pau"]
+    args = (out["phonemes_pf"], out["note_pitches_pf"], out["note_boundaries_pf"])
+    if correction:
+        plain_hz, _notes = apply_pitch_correction(
+            plain_hz, voiced, *args,
+            frame_rate=frame_rate, cons_weight=cons_weight,
+            nucleus_phs=out["nucleus_phs"])
+    if hann_alpha > 0.0:
+        plain_hz = apply_hann_pitch_correction(
+            plain_hz, voiced, *args,
+            frame_rate=frame_rate, alpha=hann_alpha, nucleus_phs=out["nucleus_phs"],
+            window=hann_window, lead_taper=hann_lead_taper,
+            trail_taper=hann_trail_taper)
+    return {**out, "plain_hz": plain_hz,
+             "f0_hz": (plain_hz * np.power(2.0, out["vib_delta"])).astype(np.float32)}
+
+
+def synthesize_f0(model, cfg: dict, score: dict, device: str = "cpu",
+                  seed: int | None = None, plain_scale=1.0,
+                  vib_scale=1.0, correction: bool = True,
+                  cons_weight: float = 0.0, hann_alpha: float = 0.8,
+                  hann_window: str = "tukey", hann_lead_taper: float = 0.6,
+                  hann_trail_taper: float = 0.1,
+                  infer_steps: int | None = None, style_mix=None):
+    """``generate_f0`` then ``correct_f0`` — generation and pitch correction in one call.
+
+    Kept because most callers want both. When you need the model's raw output, or want to
+    put something of your own between the two, call the two functions yourself.
+    """
+    out = generate_f0(model, cfg, score, device=device, seed=seed,
+                      plain_scale=plain_scale, vib_scale=vib_scale,
+                      infer_steps=infer_steps, style_mix=style_mix)
+    return correct_f0(out, correction=correction, cons_weight=cons_weight,
+                      hann_alpha=hann_alpha, hann_window=hann_window,
+                      hann_lead_taper=hann_lead_taper, hann_trail_taper=hann_trail_taper)
 
 
 def _plot(out: dict, path: str, title: str):

@@ -219,17 +219,32 @@ def _mel_loudness_offset(mel: np.ndarray, uv: np.ndarray) -> float:
     return float(min(max(d, _MEL_OFFSET_CLAMP[0]), _MEL_OFFSET_CLAMP[1]))
 
 
-def _vocode(ctx, mel: np.ndarray, logf0: np.ndarray, uv: np.ndarray) -> np.ndarray:
-    """mel → 波形。**LeapSinger の `mel_to_wav` と同じ入力仕様だが、正規化はしない。**
+def mel_postprocess(ctx, mel: np.ndarray, uv: np.ndarray) -> np.ndarray:
+    """⑥ mel 後処理。ボコーダへ渡す前に mel の音量を整える（図の「Mel postprocess」）。
 
-    `mel_to_wav` は返す直前にフレーズをピーク 0.95 へ正規化する。単体で 1 フレーズを
-    鳴らすには妥当だが、曲を組み立てるとフレーズごとの音量がいちばん大きい 1 サンプルで
-    決まってしまう。破裂音が 1 つ入ればそのフレーズが沈み、静かなフレーズは持ち上がる。
-    音響モデルの出力自体は揃っている（実測でフレーズ間の mel 平均の差は 0.6dB）ので、
-    ここでは生のまま受け取り、正規化は曲全体に 1 度だけ掛ける（`_normalize`）。
+    やることは 2 つだけで、どちらも ln-mel への足し算。スペクトルの形は変えない。
+
+      1. ラウドネス合わせ … ボコーダを学習時と同じ音量で駆動する（`_mel_loudness_offset`）
+      2. フレームリミッタ … 音量の大きいフレームだけ下げる（`_mel_frame_limit`）
+
+    2 を mel の段でやるのは、ボコーダが出力の直前に `[-1, 1]` のクリップを持つため。
+    波形になってからでは潰れた分を取り返せない。
     """
     mel = np.asarray(mel) + _mel_loudness_offset(mel, uv)   # 粗いラウドネス合わせ
-    mel = _mel_frame_limit(mel, float(ctx.frame_rate))     # そのうえで音量の大きいフレームを叩く
+    return _mel_frame_limit(mel, float(ctx.frame_rate))     # そのうえで音量の大きいフレームを叩く
+
+
+def _vocode(ctx, mel: np.ndarray, logf0: np.ndarray, uv: np.ndarray) -> np.ndarray:
+    """⑦ ボコーダ。mel → 波形（図の「Vocoder」）。
+
+    **LeapSinger の `mel_to_wav` と同じ入力仕様だが、正規化はしない。** `mel_to_wav` は
+    返す直前にフレーズをピーク 0.95 へ正規化する。単体で 1 フレーズを鳴らすには妥当だが、
+    曲を組み立てるとフレーズごとの音量がいちばん大きい 1 サンプルで決まってしまう。
+    破裂音が 1 つ入ればそのフレーズが沈み、静かなフレーズは持ち上がる。音量は
+    `mel_postprocess` が mel の段で決めているので、ここでは何も掛けない。
+
+    mel は `mel_postprocess` を通したものを渡すこと（この関数は後処理をしない）。
+    """
     m = np.ascontiguousarray(np.asarray(mel).T[None], dtype=np.float32)      # [1,T,128]
     T = m.shape[1]
 
@@ -406,10 +421,153 @@ def load_models(
     return ctx
 
 
+# ── 1 フレーズを合成する 8 つの段 ─────────────────────────────────────────────
+# guide/fig/svs_pipeline.svg の箱と 1 対 1 で対応する。上から順に呼ぶだけで 1 フレーズが
+# 波形になる。改造するときは、触りたい段の関数だけを差し替えればよい。
+
+def phrase_cons_durations(ctx: SvsContext, phrase, style_id: int = 0, style_mix=None):
+    """① 子音長モデル。楽譜のフレーズ → 子音の「自然長」（図の「Duration model」）。
+
+    ここで出るのは**モデルが思う長さ**だけで、ノートに収まるかは見ていない。収める仕事は
+    次の `phrase_duration_postprocess` が担当する。
+
+    戻り値 (phrase, naturals):
+      phrase    多モーラノートをグループへ展開したもの（以降はこちらを使う）
+      naturals  (onset, coda, core) の自然長。子音長モデルが無ければ None
+
+    多モーラノート（1 ノートに「かか」など）はここで 1 モーラ 1 ノートへ展開する。
+    内部の子音も予測対象にするためで、展開は冪等なのでモデルが無くても通してよい。
+    """
+    from svs.duration_postprocess import split_phrase_syllables
+    phrase = split_phrase_syllables(phrase, ctx.phoneset)
+    if ctx.cons_dur_model is None:
+        return phrase, None
+    from svs.cons_dur import predict_cons_naturals
+    return phrase, predict_cons_naturals(
+        phrase, ctx.cons_dur_model, spk_id=ctx.spk_id, style_id=style_id,
+        device=ctx.device, phoneset=ctx.phoneset, with_core=True, style_mix=style_mix)
+
+
+def phrase_duration_postprocess(ctx: SvsContext, phrase, naturals, style_id: int = 0):
+    """② 持続長の後処理。自然長 → 実際に使う音素列とフレーム数（図の「Duration postprocess」）。
+
+    自然長はノートに収まるとは限らない。ここで下限（floor）を保証し、収まらなければ
+    音素ごとの重み比で圧縮する。詳しくは guide/duration_model.md。
+
+    戻り値 (seq, ph_durs):
+      seq      PhonemeSequence（phonemes / dur_sec / note_midi / is_vowel / ...）
+      ph_durs  音素ごとのフレーム数
+    """
+    from svs.duration_postprocess import postprocess_durations, to_frames
+    ps = ctx.phoneset
+    if naturals is None:
+        seq = postprocess_durations(phrase, rest_before=1e9, phoneset=ps)
+    else:
+        on_nat, cd_nat, co_nat = naturals
+        # floor も話者別に引く（profile.per_speaker があれば。無ければ全話者共通値）。
+        # モデル側は spk_emb で話者を見ているので、floor だけ共通だと話者差がここで潰れる。
+        seq = postprocess_durations(phrase, ctx.cons_dur_profile, on_nat, cd_nat,
+                                    core_nat=co_nat, rest_before=1e9, phoneset=ps,
+                                    spk_id=ctx.spk_id, style_id=style_id)
+    ph_durs, _T = to_frames(seq.dur_sec, ctx.frame_rate)
+    return seq, ph_durs
+
+
+def phrase_f0(ctx: SvsContext, seq, *, style_id: int = 0, seed: int = 0,
+              plain_scale: float = 1.0, vib_scale: float = 1.0, style_mix=None) -> dict:
+    """③ F0 モデル。音素列 → F0 と v/uv（図の「F0 model」）。**補正はまだ掛からない。**
+
+    モデルが出したままの baseline + 抑揚 + ビブラート + v/uv。楽譜の音高へ寄せるのは
+    次の `phrase_pitch_correction`。戻り値は f0_hz / uv / baseline_log2 / plain_delta /
+    vib_delta などを持つ dict。
+    """
+    return ctx.pp.generate_f0(
+        ctx.f0_model, ctx.f0_cfg,
+        _f0_score_from_seq(seq, spk_id=ctx.spk_id, style_id=style_id),
+        device=ctx.device, seed=seed,
+        plain_scale=plain_scale, vib_scale=vib_scale, style_mix=style_mix)
+
+
+def phrase_pitch_correction(ctx: SvsContext, f0o: dict, **kwargs) -> dict:
+    """④ ピッチ補正。生成された F0 を楽譜の音高へ寄せる（図の「Pitch correction」）。
+
+    2 段とも**抑揚（plain）にだけ**掛かるので、ビブラートの形もしゃくりも残る。
+    切りたいときは `correction=False`（1 段目）や `hann_alpha=0`（2 段目）を渡す。
+    詳しくは guide/pitch_correction.md。
+    """
+    return ctx.pp.correct_f0(f0o, **kwargs)
+
+
+def phrase_mel(ctx: SvsContext, ph_ids, ph_durs, f0_hz, logf0, uv,
+               *, style_id: int = 0, num_steps: Optional[int] = None,
+               seed: int = 0) -> np.ndarray:
+    """⑤ 音響。音素列 + フレーム数 + F0 → 128 次元 log-mel（図の「Acoustic model」）。
+
+    音響モデルが v/uv を条件に取るかどうかで呼び分ける。取らない版（配布ウェイト）は
+    f0_hz をそのまま食い、話者は spk_embed ベクトルで注入する。
+    """
+    if num_steps is None:
+        num_steps = int(ctx.ac_cfg.get('infer_steps', 1))
+    if ctx.use_uv:
+        item = dict(ph_ids=ph_ids, ph_durs=ph_durs.astype(np.int64),
+                    f0_logf0=logf0, uv=uv,
+                    spk_id=int(ctx.spk_id), style_id=int(style_id))
+        return ctx.ls.infer_mel(ctx.ac_model, item, num_steps=num_steps,
+                                device=ctx.device, seed=seed)
+    # uvfree は f0_hz（logf0 ではない）を取る。話者は spk_embed で明示注入。
+    return ctx.ls.infer_mel_uvfree(
+        ctx.ac_model, ph_ids, ph_durs.astype(np.int64), f0_hz,
+        num_steps=num_steps, spk_embed=ctx.spk_vec, device=ctx.device, seed=seed)
+
+
+def vocoder_uv(ctx: SvsContext, ph_ids, ph_durs, uv, n_frames: int) -> np.ndarray:
+    """ボコーダへ渡す有声/無声フラグ。
+
+    **uv_hard = (F0 モデルの vuv > 0.5) かつ (pau でない)**。ボコーダはこのフラグで
+    無声フレームの倍音励起を落とすので、休符を有声のまま渡すとそこに倍音が乗る。
+    """
+    frame_ph = np.repeat(ph_ids, np.maximum(ph_durs.astype(np.int64), 0))[:n_frames]
+    if len(frame_ph) < n_frames:
+        frame_ph = np.pad(frame_ph, (0, n_frames - len(frame_ph)),
+                          constant_values=ctx.ph2id.get('pau', 0))
+    is_pau_fr = np.isin(frame_ph, [ctx.ph2id[p] for p in ('pau',) if p in ctx.ph2id])
+    return ((uv > 0.5) & ~is_pau_fr).astype(np.float32)
+
+
+def phrase_start_sec(phrase, seq, phoneset):
+    """⑧ 配置。この波形を置きたい絶対時刻と、先頭 onset の長さ。
+
+    フレーズ先頭ノートの**音節核**が楽譜の時刻に来るようにする。波形は
+    [leading pau][先頭 onset][核 ...] の順なので、その 2 つを差し引いた時刻へ置く。
+    差し引かないと、フレーズ全体が先頭 onset の長さだけ遅れる。ずれ量は先頭子音に
+    よって変わる（日本語で中央値 35ms・最大 273ms、英語で中央値 110ms・最大 470ms）ため、
+    全体を一律にずらしても直らない＝フレーズ間の相対位置が崩れる。
+    フレーズ内部の onset は前のノートへ前倒しされており、ここはそれと同じ規約にあたる。
+
+    **負になりうる。** 0 でクランプせず、render_score が全フレーズを見てから一括でずらす。
+    """
+    from svs.duration_postprocess import split_syllable
+    n_on0 = len(split_syllable(phrase.notes[0].phonemes, phoneset)[0]) if phrase.notes else 0
+    onset0_sec = float(seq.dur_sec[1:1 + n_on0].sum()) if n_on0 else 0.0
+    lead_sec = float(seq.dur_sec[0]) if len(seq.dur_sec) else 0.0
+    return phrase.start_sec - lead_sec - onset0_sec, onset0_sec
+
+
 def render_phrase(ctx: SvsContext, phrase, *, num_steps: Optional[int] = None, seed: int = 0,
                   plain_scale: float = 1.0, vib_scale: float = 1.0,
                   style_id: int = 0, style_mix=None, f0_only: bool = False) -> dict:
     """1 フレーズを合成し、途中経過ごと返す。
+
+    上の 8 つの段を順に呼ぶだけ。段ごとの詳細はそれぞれの関数の docstring にある。
+
+        ① phrase_cons_durations        楽譜     → 子音の自然長
+        ② phrase_duration_postprocess  自然長   → 音素列・フレーム数
+        ③ phrase_f0                    音素列   → F0・v/uv（補正前）
+        ④ phrase_pitch_correction      F0       → 楽譜の音高へ寄せた F0
+        ⑤ phrase_mel                   + F0     → mel
+        ⑥ mel_postprocess              mel      → mel（音量合わせ）
+        ⑦ _vocode                      mel + F0 → 波形
+        ⑧ phrase_start_sec                      → 置く時刻
 
     num_steps: 音響モデルのサンプリング歩数。触らないでください。同梱モデルは 1 歩で出るよう
       学習した rectified flow で、ckpt も 1 を指定しています。増やすと遅くなるうえ音も悪く
@@ -419,91 +577,51 @@ def render_phrase(ctx: SvsContext, phrase, *, num_steps: Optional[int] = None, s
     f0_only: True なら持続長と F0 まで（音響・ボコーダを走らせない）。'mel' / 'wav' は None。
 
     戻り値: {'seq', 'ph_durs', 'f0', 'mel', 'wav', 'start_sec', 'onset0_sec'}
-      start_sec  : この波形を置きたい絶対時刻 [s]。**負になりうる**（先頭 onset を
-                   楽譜のノート開始より前に置くため）。0 でクランプせず、render_score が
-                   全フレーズを見てから一括でずらす。
-      onset0_sec : 先頭 onset クラスタの長さ [s]（ノート開始より前倒しされる量）。
-      seq  = PhonemeSequence、f0 = synthesize_f0 の dict、mel = [n_mels, T]
+      seq  = PhonemeSequence、f0 = synthesize_f0 の dict、mel = [n_mels, T]（後処理**前**）
     """
-    from svs.duration_postprocess import (postprocess_durations, to_frames,
-                                          split_phrase_syllables, split_syllable)
-
-    if num_steps is None:
-        num_steps = int(ctx.ac_cfg.get('infer_steps', 1))
-
     # 音素表は ctx.phoneset（既定 = 子音長 ckpt が記録したもの）を全段へ明示的に渡す。
     # 渡さないとモジュール既定（日本語）に落ち、英語 ckpt でも全子音がフォールバック長に
     # なる（例外も警告も出ない）。
     ps = ctx.phoneset
 
-    # 多モーラノートをグループへ展開してから子音長を予測する（内部子音も予測対象にするため）。
-    # 展開は冪等なので、モデルが無い場合もそのまま通してよい。
-    phrase = split_phrase_syllables(phrase, ps)
-    if ctx.cons_dur_model is not None:
-        from svs.cons_dur import predict_cons_naturals
-        on_nat, cd_nat, co_nat = predict_cons_naturals(
-            phrase, ctx.cons_dur_model, spk_id=ctx.spk_id, style_id=style_id,
-            device=ctx.device, phoneset=ps, with_core=True, style_mix=style_mix)
-        # floor も話者別に引く（profile.per_speaker があれば。無ければ全話者共通値）。
-        # モデル側は spk_emb で話者を見ているので、floor だけ共通だと話者差がここで潰れる。
-        seq = postprocess_durations(phrase, ctx.cons_dur_profile, on_nat, cd_nat,
-                                    core_nat=co_nat, rest_before=1e9, phoneset=ps,
-                                    spk_id=ctx.spk_id, style_id=style_id)
-    else:
-        seq = postprocess_durations(phrase, rest_before=1e9, phoneset=ps)
-    ph_durs, _T = to_frames(seq.dur_sec, ctx.frame_rate)
+    # ── ① 子音長モデル ──────────────────────────────────────────────────────
+    phrase, naturals = phrase_cons_durations(ctx, phrase, style_id=style_id, style_mix=style_mix)
 
-    # ── F0（2段ピッチ補正込み）
-    f0o = ctx.pp.synthesize_f0(
-        ctx.f0_model, ctx.f0_cfg,
-        _f0_score_from_seq(seq, spk_id=ctx.spk_id, style_id=style_id),
-        device=ctx.device, seed=seed,
-        plain_scale=plain_scale, vib_scale=vib_scale, style_mix=style_mix)
+    # ── ② 持続長の後処理 ────────────────────────────────────────────────────
+    seq, ph_durs = phrase_duration_postprocess(ctx, phrase, naturals, style_id=style_id)
+
+    # ── ③ F0 モデル ─────────────────────────────────────────────────────────
+    f0o = phrase_f0(ctx, seq, style_id=style_id, seed=seed,
+                    plain_scale=plain_scale, vib_scale=vib_scale, style_mix=style_mix)
+
+    # ── ④ ピッチ補正 ────────────────────────────────────────────────────────
+    f0o = phrase_pitch_correction(ctx, f0o)
+
+    # 以降の段が使う形に整える。フレーム数は F0 が決めるので、音素列の側を合わせる。
     f0_hz = np.asarray(f0o['f0_hz'], np.float32)
     uv = np.asarray(f0o['uv'], np.float32)
-    Tf = len(f0_hz)
-    ph_durs = _align_durs(ph_durs, Tf)
+    n_frames = len(f0_hz)
+    ph_durs = _align_durs(ph_durs, n_frames)
     logf0 = np.log2(np.maximum(f0_hz, 1.0)).astype(np.float32)   # gap-less（ボコーダ用）
-
     ph_ids = np.asarray([ctx.ph2id[p] for p in seq.phonemes], np.int64)
 
     if f0_only:
         return {'seq': seq, 'ph_durs': ph_durs, 'f0': f0o, 'mel': None, 'wav': None,
                 'start_sec': None, 'onset0_sec': None}
 
-    # ── 音響 mel（モデルの use_uv で呼び分け）
-    if ctx.use_uv:
-        item = dict(ph_ids=ph_ids, ph_durs=ph_durs.astype(np.int64),
-                    f0_logf0=logf0, uv=uv,
-                    spk_id=int(ctx.spk_id), style_id=int(style_id))
-        mel = ctx.ls.infer_mel(ctx.ac_model, item, num_steps=num_steps,
-                               device=ctx.device, seed=seed)
-    else:
-        # uvfree は f0_hz（logf0 ではない）を取る。話者は spk_embed で明示注入。
-        mel = ctx.ls.infer_mel_uvfree(
-            ctx.ac_model, ph_ids, ph_durs.astype(np.int64), f0_hz,
-            num_steps=num_steps, spk_embed=ctx.spk_vec,
-            device=ctx.device, seed=seed)
+    # ── ⑤ 音響 mel ──────────────────────────────────────────────────────────
+    mel = phrase_mel(ctx, ph_ids, ph_durs, f0_hz, logf0, uv,
+                     style_id=style_id, num_steps=num_steps, seed=seed)
 
-    # ── ボコーダ（mel→wav, NHV ONNX）
-    # uv は **uv_hard = (F0 モデルの vuv > 0.5) & (pau でない)** を渡す（ボコーダの入力仕様）。
-    frame_ph = np.repeat(ph_ids, np.maximum(ph_durs.astype(np.int64), 0))[:Tf]
-    if len(frame_ph) < Tf:
-        frame_ph = np.pad(frame_ph, (0, Tf - len(frame_ph)), constant_values=ctx.ph2id.get('pau', 0))
-    is_pau_fr = np.isin(frame_ph, [ctx.ph2id[p] for p in ('pau',) if p in ctx.ph2id])
-    uv_hard = ((uv > 0.5) & ~is_pau_fr).astype(np.float32)
-    wav = _vocode(ctx, mel, logf0, uv_hard)
+    # ── ⑥ mel 後処理 ────────────────────────────────────────────────────────
+    uv_hard = vocoder_uv(ctx, ph_ids, ph_durs, uv, n_frames)
+    mel_in = mel_postprocess(ctx, mel, uv_hard)
 
-    # ── 配置：フレーズ先頭ノートの**音節核**が楽譜の時刻に来るようにする。
-    # 波形は [leading pau][先頭 onset][核 ...] の順なので、その 2 つを差し引いた時刻へ置く。
-    # 差し引かないと、フレーズ全体が先頭 onset の長さだけ遅れる。ずれ量は先頭子音に
-    # よって変わる（日本語で中央値 35ms・最大 273ms、英語で中央値 110ms・最大 470ms）ため、
-    # 全体を一律にずらしても直らない＝フレーズ間の相対位置が崩れる。
-    # フレーズ内部の onset は前のノートへ前倒しされており、ここはそれと同じ規約にあたる。
-    n_on0 = len(split_syllable(phrase.notes[0].phonemes, ps)[0]) if phrase.notes else 0
-    onset0_sec = float(seq.dur_sec[1:1 + n_on0].sum()) if n_on0 else 0.0
-    lead_sec = float(seq.dur_sec[0]) if len(seq.dur_sec) else 0.0
-    start_sec = phrase.start_sec - lead_sec - onset0_sec
+    # ── ⑦ ボコーダ ──────────────────────────────────────────────────────────
+    wav = _vocode(ctx, mel_in, logf0, uv_hard)
+
+    # ── ⑧ 配置 ──────────────────────────────────────────────────────────────
+    start_sec, onset0_sec = phrase_start_sec(phrase, seq, ps)
     return {'seq': seq, 'ph_durs': ph_durs, 'f0': f0o, 'mel': mel,
             'wav': wav, 'start_sec': start_sec, 'onset0_sec': onset0_sec}
 
