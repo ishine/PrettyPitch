@@ -53,6 +53,115 @@ def load_model(ckpt_path: str, device: str = "cpu"):
     return model, cfg
 
 
+# ── generate_f0 の中身を段ごとに ─────────────────────────────────────────────
+
+def _read_score(score: dict, cfg: dict):
+    """譜面 dict → 音素と長さと音高。**ここで検証も済ませる。**
+
+    戻り値 (ph_strs, ph_ids, dur_sec, values):
+      values は音素ごとの MIDI で、指定の無いところは NaN。核音素には必須、それ以外は
+      任意で、書くと baseline の形だけが変わる（モデルの入力は変わらない）。
+    """
+    ph2id = {p: i for i, p in enumerate(cfg["phonemes"])}
+    nucleus_phs = frozenset(cfg["nucleus"])
+    slots = score["phonemes"]
+    ph_strs = [s["ph"] for s in slots]
+
+    unknown = sorted({p for p in ph_strs if p not in ph2id})
+    if unknown:
+        raise ValueError(f"phonemes not in the model vocab: {unknown}")
+    nuc_missing = [s["ph"] for s in slots
+                   if s["ph"] in nucleus_phs and "midi" not in s]
+    if nuc_missing:
+        raise ValueError(f"nucleus phonemes need a midi value: {nuc_missing}")
+
+    ph_ids = np.array([ph2id[p] for p in ph_strs], dtype=np.int64)
+    dur_sec = np.array([float(s["dur"]) for s in slots], dtype=np.float32)
+    values = np.array([float(s["midi"]) if "midi" in s else np.nan for s in slots],
+                      dtype=np.float64)
+    return ph_strs, ph_ids, dur_sec, values
+
+
+def _frame_grid(dur_sec, frame_rate: float):
+    """秒の列 → フレームの格子。戻り値 (T, ph_durs)。
+
+    各音素に最低 1 フレームを保証するので、合計が秒から素直に出る T とは一致しないことが
+    ある。以降の T は必ずこちらの合計を使う。
+    """
+    T = int(np.round(np.sum(dur_sec) * frame_rate))
+    fb = phoneme_frame_bounds(dur_sec, frame_rate, T)
+    ph_durs = np.maximum(np.diff(fb), 1).astype(np.int64)
+    return int(ph_durs.sum()), ph_durs
+
+
+def _baseline_and_model_pitch(ph_strs, values, dur_sec, T: int, cfg: dict):
+    """**このモデルの肝。** 音高から 2 つの別物を作る。学習時と同じ手順でなければならない。
+
+    戻り値 (baseline, pitch):
+
+    baseline … F0 の土台。log2 領域の階段をガウシアン（σ 20ms）で丸めたもの。モデルは
+        これを生成せず、学習でも推論でも同じ式で作る。**ここは全音素の値を使う**ので、
+        子音に音高を書くと土台の形だけが変わる（調声用の抜け道）。
+
+    pitch … モデルへの入力。**核音素の値だけ**を後ろへ持ち回った階段を正規化したもの
+        （dataset.py と同じ）。核以外に書いた値はここには入らないので、モデルの出力は
+        変わらない。baseline と入力で使う値が違うのは、この差を作るため。
+    """
+    baseline = build_baseline(values, dur_sec, T, float(cfg["frame_rate"]),
+                              sigma_sec=float(cfg.get("baseline_sigma_sec", 0.02)))
+    if baseline is None:
+        raise ValueError("score carries no pitch value at all")
+
+    from prettypitch.baseline import fill_values
+    center, scale = float(cfg["pitch_center"]), float(cfg["pitch_scale"])
+    is_nuc = np.array([p in frozenset(cfg["nucleus"]) for p in ph_strs])
+    filled = fill_values(np.where(is_nuc, values, np.nan))
+    pitch = np.where(np.isfinite(filled), (filled - center) / scale, 0.0).astype(np.float32)
+    return baseline, pitch
+
+
+def _sample_layers(model, ph_ids, pitch, ph_durs, score: dict, device: str,
+                   seed: int | None, infer_steps: int | None, style_mix):
+    """モデルを走らせて 3 チャンネルを得る。戻り値 [3, T]（抑揚・ビブラート・v/uv）。"""
+    dev = torch.device(device)
+    if seed is not None:
+        torch.manual_seed(seed)
+    t = lambda a, dt: torch.as_tensor(a, dtype=dt, device=dev).unsqueeze(0)
+    args = (t(ph_ids, torch.long), t(pitch, torch.float32), t(ph_durs, torch.long))
+    kw = dict(spk_id=torch.tensor([int(score.get("spk_id", 0))], device=dev),
+              style_id=torch.tensor([int(score.get("style_id", 0))], device=dev))
+    if style_mix is not None:
+        kw["style_mix"] = torch.as_tensor(np.asarray(style_mix, np.float32),
+                                          device=dev).unsqueeze(0)
+    # reflow は infer_steps を Euler ステップ数として受ける。DDPM は n_steps 固定。
+    if infer_steps is not None and hasattr(model, "predict_velocity"):
+        out3 = model.sample(*args, num_steps=int(infer_steps), **kw)
+    else:
+        out3 = model.sample(*args, **kw)
+    return out3[0].cpu().numpy()
+
+
+def _apply_scales(out3, cfg: dict, plain_scale, vib_scale, n_frames: int):
+    """3 チャンネルに学習時の標準偏差とユーザー指定の倍率を掛ける。
+
+    倍率はスカラーでもフレームごとの配列でもよい。配列ならフレーズより短いと落とす
+    （黙って短い方に合わせると、途中から効かなくなって気づけない）。
+    """
+    def per_frame(v, name):
+        a = np.asarray(v, dtype=np.float64)
+        if a.ndim == 0:
+            return float(a)
+        if a.shape[0] < n_frames:
+            raise ValueError(
+                f"{name}: per-frame array has {a.shape[0]} frames, the phrase has {n_frames}")
+        return a[:n_frames]
+
+    plain_delta = out3[0, :n_frames] * float(cfg["plain_std"]) * per_frame(plain_scale, "plain_scale")
+    vib_delta = out3[1, :n_frames] * float(cfg["vib_std"]) * per_frame(vib_scale, "vib_scale")
+    vuv = out3[2, :n_frames]                              # uv probability in [0,1]
+    return plain_delta, vib_delta, vuv
+
+
 def generate_f0(model, cfg: dict, score: dict, device: str = "cpu",
                 seed: int | None = None, plain_scale=1.0, vib_scale=1.0,
                 infer_steps: int | None = None, style_mix=None):
@@ -86,82 +195,30 @@ def generate_f0(model, cfg: dict, score: dict, device: str = "cpu",
         ``phonemes_pf``, ``note_pitches_pf`` and ``frame_is_pau``.
     """
     frame_rate = float(cfg["frame_rate"])
-    ph2id = {p: i for i, p in enumerate(cfg["phonemes"])}
-    nucleus_phs = frozenset(cfg["nucleus"])
-    center, scale = float(cfg["pitch_center"]), float(cfg["pitch_scale"])
-    plain_std, vib_std = float(cfg["plain_std"]), float(cfg["vib_std"])
 
-    slots = score["phonemes"]
-    ph_strs = [s["ph"] for s in slots]
-    unknown = sorted({p for p in ph_strs if p not in ph2id})
-    if unknown:
-        raise ValueError(f"phonemes not in the model vocab: {unknown}")
-    ph_ids = np.array([ph2id[p] for p in ph_strs], dtype=np.int64)
-    dur_sec = np.array([float(s["dur"]) for s in slots], dtype=np.float32)
-    values = np.array([float(s["midi"]) if "midi" in s else np.nan for s in slots],
-                      dtype=np.float64)
+    # ── ① 譜面を読む（検証込み）──────────────────────────────────────────────
+    ph_strs, ph_ids, dur_sec, values = _read_score(score, cfg)
 
-    nuc_missing = [s["ph"] for s in slots
-                   if s["ph"] in nucleus_phs and "midi" not in s]
-    if nuc_missing:
-        raise ValueError(f"nucleus phonemes need a midi value: {nuc_missing}")
+    # ── ② フレーム格子を決める ──────────────────────────────────────────────
+    T, ph_durs = _frame_grid(dur_sec, frame_rate)
 
-    T = int(np.round(np.sum(dur_sec) * frame_rate))
-    fb = phoneme_frame_bounds(dur_sec, frame_rate, T)
-    ph_durs = np.maximum(np.diff(fb), 1).astype(np.int64)
-    T = int(ph_durs.sum())
+    # ── ③ baseline とモデル入力の音高を作る（学習時と同じ手順）──────────────
+    baseline, pitch = _baseline_and_model_pitch(ph_strs, values, dur_sec, T, cfg)
 
-    # baseline: ALL user values (non-nucleus included) shape the staircase
-    baseline = build_baseline(values, dur_sec, T, frame_rate,
-                              sigma_sec=float(cfg.get("baseline_sigma_sec", 0.02)))
-    if baseline is None:
-        raise ValueError("score carries no pitch value at all")
+    # ── ④ モデルを走らせる ──────────────────────────────────────────────────
+    out3 = _sample_layers(model, ph_ids, pitch, ph_durs, score, device,
+                          seed, infer_steps, style_mix)
 
-    # model input: forward-filled note-pitch staircase (mirrors dataset.py). Each nucleus
-    # value is held forward to the following consonants and changes only at the next
-    # nucleus; every phoneme has a value (no has-flag, no nucleus/consonant split). The
-    # fill uses NUCLEUS values only, so a user value on a non-nucleus phoneme reshapes the
-    # baseline alone (the model input stays unchanged).
-    is_nuc = np.array([p in nucleus_phs for p in ph_strs])
-    from prettypitch.baseline import fill_values
-    filled = fill_values(np.where(is_nuc, values, np.nan))
-    pitch = np.where(np.isfinite(filled), (filled - center) / scale, 0.0).astype(np.float32)
+    # ── ⑤ 3 チャンネルを取り出して倍率を掛ける ──────────────────────────────
+    # モデルが返すフレーム数が格子とずれることがあるので、短い方に合わせる。
+    n_frames = min(T, out3.shape[1])
+    plain_delta, vib_delta, vuv = _apply_scales(out3, cfg, plain_scale, vib_scale, n_frames)
+    baseline = baseline[:n_frames]
 
-    dev = torch.device(device)
-    if seed is not None:
-        torch.manual_seed(seed)
-    t = lambda a, dt: torch.as_tensor(a, dtype=dt, device=dev).unsqueeze(0)
-    sample_args = (t(ph_ids, torch.long), t(pitch, torch.float32), t(ph_durs, torch.long))
-    sample_kw = dict(spk_id=torch.tensor([int(score.get("spk_id", 0))], device=dev),
-                     style_id=torch.tensor([int(score.get("style_id", 0))], device=dev))
-    if style_mix is not None:
-        sample_kw["style_mix"] = torch.as_tensor(np.asarray(style_mix, np.float32),
-                                                 device=dev).unsqueeze(0)
-    # reflow は infer_steps を Euler ステップ数として受ける。DDPM は n_steps 固定。
-    if infer_steps is not None and hasattr(model, "predict_velocity"):
-        out3 = model.sample(*sample_args, num_steps=int(infer_steps), **sample_kw)
-    else:
-        out3 = model.sample(*sample_args, **sample_kw)
-    out3 = out3[0].cpu().numpy()                          # [3, T]
-
-    Tm = min(T, out3.shape[1])
-
-    def _per_frame(scale, name):
-        s = np.asarray(scale, dtype=np.float64)
-        if s.ndim == 0:
-            return float(s)
-        if s.shape[0] < Tm:
-            raise ValueError(f"{name}: per-frame array has {s.shape[0]} frames, the phrase has {Tm}")
-        return s[:Tm]
-
-    plain_delta = out3[0, :Tm] * plain_std * _per_frame(plain_scale, "plain_scale")
-    vib_delta = out3[1, :Tm] * vib_std * _per_frame(vib_scale, "vib_scale")
-    vuv = out3[2, :Tm]                                   # uv probability in [0,1]
-    baseline = baseline[:Tm]
-
-    # per-frame arrays for correction + pau mask
+    # ── ⑥ 組み立てる ────────────────────────────────────────────────────────
+    # 補正と v/uv が要るフレーム展開済みの配列（音素・ノート音高・ノート境界・無音マスク）
     phonemes_pf, note_pitches_pf, note_bnd_pf = build_per_frame_arrays(
-        ph_strs, ph_durs, values, Tm)
+        ph_strs, ph_durs, values, n_frames)
     frame_is_pau = np.array([p in _SILENCE_PHS for p in phonemes_pf])
 
     plain_hz = np.power(2.0, baseline + plain_delta).astype(np.float32)
@@ -181,7 +238,7 @@ def generate_f0(model, cfg: dict, score: dict, device: str = "cpu",
         "phonemes_pf": np.asarray(phonemes_pf),
         "note_pitches_pf": np.asarray(note_pitches_pf, dtype=np.float64),
         "frame_is_pau": np.asarray(frame_is_pau, dtype=bool),
-        "nucleus_phs": nucleus_phs,
+        "nucleus_phs": frozenset(cfg["nucleus"]),
     }
 
 

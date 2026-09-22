@@ -10,7 +10,7 @@ An F0 (pitch curve) model for singing voice synthesis that needs no musical scor
 
 ## What is new
 
-Training uses no score (ust / MusicXML / svp). **A wav and a phoneme label (.lab) are enough.**
+Training uses no score (ust / MusicXML). **A wav and a phoneme label (.lab) are enough.**
 
 Instead of note pitches, PrettyPitch estimates a **representative pitch value** for each *nucleus* phoneme (syllable nucleus: a i u e o A I U E O N) from the F0 that was actually sung. The estimator is a refinement of the perceived-pitch weighted mean of Blaauw & Bonada (2017): stability is measured by the F0 slope (|dF0/dt|), and for a short note that is sung as a brief peak (< 300 ms) the value is taken near the top of the peak.
 
