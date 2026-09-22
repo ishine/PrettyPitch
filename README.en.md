@@ -4,6 +4,8 @@
 
 An F0 (pitch curve) model for singing voice synthesis that needs no musical score to train. It is the sibling repository of the [LeapSinger](https://github.com/wavtechyukky/LeapSinger) acoustic model and shares its frame grid (hop 256 / 44.1 kHz) and phoneme set.
 
+🎧 **Listen here → [PrettyPitch demo page](https://wavtechyukky.github.io/PrettyPitch/)** — three singers, a tempo sweep, and a 5×5 grid of the expression and vibrato knobs
+
 ![PrettyPitch overview](guide/fig/prettypitch_overview.svg)
 
 ## What is new
@@ -162,8 +164,6 @@ export/         f0.py (ONNX export of the F0 model, DDPM and reflow alike, with 
 ```
 
 ## Synthesizing singing (SVS)
-
-The [demo page](https://wavtechyukky.github.io/PrettyPitch/) has the results to listen to — three singers, a tempo sweep, and a 5×5 grid of the expression and vibrato knobs.
 
 Combined with the [LeapSinger](https://github.com/wavtechyukky/LeapSinger) acoustic model and the NHVSing v3.2.1 vocoder, a score renders all the way to audio. The F0 model, the consonant-duration model and the vocoder (`nhv_v3_2_1.onnx`) are bundled in `checkpoints/`, so the only extra download is the LeapSinger acoustic model (details in `checkpoints/leapsinger/place_leapsinger_models_here.txt`):
 

@@ -4,6 +4,8 @@
 
 学習に楽譜データが不要な、歌声合成のための、F0（ピッチカーブ）モデルです。音響モデル [LeapSinger](https://github.com/wavtechyukky/LeapSinger) の姉妹リポジトリで、同じフレーム設定（hop 256 / 44.1kHz）・同じ音素セットを共有します。
 
+🎧 **試聴はこちら → [PrettyPitch デモページ](https://wavtechyukky.github.io/PrettyPitch/)**（3 話者・早口・抑揚とビブラートの 5×5）
+
 ![PrettyPitch の概要](guide/fig/prettypitch_overview.svg)
 
 ## 何が新しいか
@@ -170,8 +172,6 @@ export/         f0.py（F0 モデルの ONNX export。DDPM / reflow 共通・メ
 ```
 
 ## 歌声を合成する（SVS）
-
-合成した音は[デモページ](https://wavtechyukky.github.io/PrettyPitch/)で聴けます（3 話者・早口・抑揚とビブラートの 5×5）。
 
 音響モデル [LeapSinger](https://github.com/wavtechyukky/LeapSinger) とボコーダ NHVSing v3.2.1 を組み合わせると、楽譜から歌声まで通ります。F0・子音長・ボコーダ（`nhv_v3_2_1.onnx`）は `checkpoints/` に同梱してあるので、追加で用意するのは LeapSinger の音響モデルだけです（詳しくは `checkpoints/leapsinger/place_leapsinger_models_here.txt`）:
 
